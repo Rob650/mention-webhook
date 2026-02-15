@@ -7,6 +7,7 @@ import { TwitterApi } from 'twitter-api-v2';
 import { Anthropic } from '@anthropic-ai/sdk';
 import fs, { mkdirSync } from 'fs';
 import { buildContextKnowledge } from './src/stages/stage2-full-research.js';
+import { loadConversationMemory, getConversationContext, saveReplyToMemory, isFollowUp, getFollowUpContext } from './src/stages/stage2-conversation-memory.js';
 
 dotenv.config();
 
@@ -89,6 +90,7 @@ function saveRepliedMentions() {
 // Load on startup
 loadReplyTracking();
 loadRepliedMentions();
+loadConversationMemory();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -226,13 +228,40 @@ async function poll() {
         
         // Log what we're about to pass to AI
         const projectsWithData = contextKnowledge.research.filter(r => r.sources > 0).length;
+        // Check if this is a follow-up to a previous reply
+        const followUpContext = isFollowUp(authorId, convId) ? getFollowUpContext(authorId, convId) : null;
+        if (followUpContext) {
+          console.log(`[FOLLOW-UP] Author ${authorId.substring(0, 8)}... asking follow-up to: "${followUpContext.previousReply.substring(0, 50)}..."`);
+          console.log(`[FOLLOW-UP] New question: "${mentionText.substring(0, 50)}..."`);
+        }
+        
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
         // Generate reply in GROK's style - ALWAYS make an attempt
-        const msg = await anthropic.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 90,
-          system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
+        // Special handling for follow-ups: evolve the conversation, don't repeat
+        const systemPrompt = followUpContext 
+          ? `You are @graisonbot replying in a Twitter thread. This is a FOLLOW-UP to your previous reply.
+INSTRUCTION: They're asking a new question/challenge. Don't repeat your last answer. Evolve the conversation.
+
+CONTEXT:
+- Your last reply was: "${followUpContext.previousReply}"
+- They're now asking: "${mentionText}"
+
+YOUR JOB:
+1. Address their NEW question directly
+2. Build on your previous point, don't repeat it
+3. Answer specifically (if they ask "which project", name one)
+4. Still witty, confident, sharp
+5. STATEMENT ONLY (no questions)
+6. Under 240 characters
+
+Example:
+- LAST: "Multi-stream beats single tokens"
+- FOLLOW-UP: "Which project though?"
+- REPLY: "Bittensor—subnets force genuine utility, not hype"
+
+Generate ONLY the reply text.`
+          : `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
 INSTRUCTION: You ALWAYS reply. Never silent. Keep it aligned with the thread discussion.
 
 YOUR JOB:
@@ -244,22 +273,23 @@ YOUR JOB:
 6. Under 240 characters
 
 CRITICAL RULES:
-- ALWAYS attempt a reply (never say you can't respond)
-- Base on thread context (don't go off-topic)
+- ALWAYS attempt a reply
+- Base on thread context
 - Use research findings when available
-- Make smart inferences from what's there
 - Confident tone (GROK style)
-- Pure statement (no "?", no "I'd need to know", no hedging)
+- Pure statement (no "?", no hedging)
 
-If unsure about specifics: Make a thematic point aligned with the discussion.
-
-Example: "Token communities ship faster than committees" (thematic, aligned, confident)
-Example: "Solana agents executing vs Ethereum theorizing—timeline shows it"
-
-Generate ONLY the reply text.`,
+Generate ONLY the reply text.`;
+        
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 90,
+          system: systemPrompt,
           messages: [{
             role: 'user',
-            content: `THREAD DISCUSSION:\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general crypto/AI discussion'}\n\nRESEARCH CONTEXT:\n${researchContextStr || '(using thread context)'}\n\nUSER COMMENT:\n${mentionText}\n\nMake a confident statement aligned with this discussion.`
+            content: followUpContext
+              ? `PREVIOUS CONTEXT:\nYour last reply: "${followUpContext.previousReply}"\nTheir follow-up: "${mentionText}"\nThread: ${contextKnowledge.conversationSummary.substring(0, 300)}\n\nAnswer their follow-up, don't repeat yourself.`
+              : `THREAD DISCUSSION:\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general discussion'}\n\nRESEARCH:\n${researchContextStr || '(thread context)'}\n\nUSER COMMENT:\n${mentionText}\n\nMake a confident statement.`
           }]
         });
         
@@ -331,7 +361,10 @@ Generate ONLY the reply text.`,
             // ALSO track this specific mention so we never reply to it again
             repliedMentions.add(mentionId);
             
-            // Save both tracking systems
+            // Save conversation memory (for follow-up detection)
+            saveReplyToMemory(authorId, convId, replyText, mentionText);
+            
+            // Save all tracking systems
             saveReplyTracking();
             saveRepliedMentions();
             
