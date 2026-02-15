@@ -26,6 +26,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
+const repliedTo = new Set(); // Track already-replied mentions
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -52,6 +53,12 @@ async function poll() {
     
     // Reply to first 3 unreplied mentions
     for (const mention of mentions.slice(0, 3)) {
+      // Skip if we already replied to this mention
+      if (repliedTo.has(mention.id)) {
+        console.log(`[SKIP] Already replied to ${mention.id}`);
+        continue;
+      }
+      
       try {
         // Generate context-aware reply with Claude
         const msg = await anthropic.messages.create({
@@ -86,7 +93,8 @@ Always acknowledge what they said first, then provide value.`,
           
           if (posted?.data?.id) {
             replyCount++;
-            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}...`);
+            repliedTo.add(mention.id); // Mark as replied to
+            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}... (tracked)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
