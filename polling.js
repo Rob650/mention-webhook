@@ -40,6 +40,7 @@ async function poll() {
     const me = await v2Client.me();
     const response = await v2Client.get('tweets/search/recent', {
       query: `@${me.data.username} -is:retweet`,
+      'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at',
       max_results: 100
     });
     
@@ -52,17 +53,27 @@ async function poll() {
     // Reply to first 3 unreplied mentions
     for (const mention of mentions.slice(0, 3)) {
       try {
-        // Generate reply with Claude
+        // Generate context-aware reply with Claude
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 100,
+          max_tokens: 120,
+          system: `You're @graisonbot, an expert AI research bot. When someone mentions you and asks about AI research, reply with:
+- Specific references to their question
+- Concrete examples or data points
+- Direct, conversational tone
+- Max 240 characters
+
+Always acknowledge what they said first, then provide value.`,
           messages: [{
             role: 'user',
-            content: `Tweet: "${mention.text.substring(0, 100)}"\n\nWrite a helpful, specific reply (max 240 chars):`
+            content: `Someone mentioned you and said: "${mention.text || ''}"\n\nWrite your reply (remember: acknowledge their point, then add specific insight):`
           }]
         });
         
         const replyText = msg.content[0].text.trim().substring(0, 280);
+        
+        console.log(`[MENTION] "${mention.text.substring(0, 60)}..."`);
+        console.log(`[REPLY-DRAFT] "${replyText.substring(0, 60)}..."`);
         
         // Post reply via v2.tweet
         try {
@@ -75,7 +86,7 @@ async function poll() {
           
           if (posted?.data?.id) {
             replyCount++;
-            console.log(`[REPLY] ✓ Posted ${posted.data.id}`);
+            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}...`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
