@@ -216,6 +216,7 @@ async function poll() {
           contextKnowledge = {
             conversationSummary: mentionText,
             topics: [],
+            projects: [],
             research: [],
             threadLength: 1
           };
@@ -298,7 +299,7 @@ Generate ONLY the reply text.`;
             role: 'user',
             content: followUpContext
               ? `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\n\nPREVIOUS CONTEXT:\nYour last reply: "${followUpContext.previousReply}"\nTheir follow-up: "${mentionText}"\n\nTHREAD SO FAR:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nAnswer their follow-up. Don't repeat. Stay on topic.`
-              : `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general discussion'}"\n\nCONVERSATION HISTORY:\n${contextKnowledge.conversationSummary.substring(0, 400)}\n\nPROJECTS/TOPICS:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general'}\n\nRESEARCH:\n${researchContextStr || '(see above)'}\n\nYOU'RE NOW BEING ASKED:\n${mentionText}\n\nReply aligned with the original topic and thread evolution.`
+              : `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general discussion'}"\n\nCONVERSATION HISTORY:\n${contextKnowledge.conversationSummary.substring(0, 400)}\n\nPROJECTS/TOPICS:\n${contextKnowledge.projects && contextKnowledge.projects.length > 0 ? contextKnowledge.projects.map(p => `@${p.name}`).join(', ') : 'general'}\n\nRESEARCH:\n${researchContextStr || '(see above)'}\n\nYOU'RE NOW BEING ASKED:\n${mentionText}\n\nReply aligned with the original topic and thread evolution.`
           }]
         });
         
