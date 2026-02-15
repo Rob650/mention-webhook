@@ -101,8 +101,21 @@ app.get('/stats', (req, res) => {
   });
 });
 
+let lastErrorTime = 0;
+let errorCount = 0;
+
 async function poll() {
   try {
+    // Rate limit backoff - if we've hit errors, wait before retrying
+    const timeSinceLastError = Date.now() - lastErrorTime;
+    if (errorCount > 3 && timeSinceLastError < 60000) {
+      console.log(`[RATE-LIMIT] Backing off... (${Math.round((60000 - timeSinceLastError) / 1000)}s remaining)`);
+      return;
+    }
+    if (timeSinceLastError > 60000) {
+      errorCount = 0;
+    }
+    
     const me = await v2Client.me();
     // Only get NEW mentions (since the last one we've seen) to avoid processing old ones repeatedly
     const searchParams = {
@@ -321,23 +334,25 @@ Generate ONLY the reply text.`;
           replyText = '';
         }
         
-        // ALWAYS have a fallback - never reply with nothing
+        // ALWAYS have a fallback - never reply with cop-outs
         if (!replyText || replyText.length === 0) {
-          // Multi-level fallback
-          if (contextKnowledge.projects && contextKnowledge.projects.length > 0) {
-            const names = contextKnowledge.projects.slice(0, 2).map(p => `@${p.name}`).join(' vs ');
-            replyText = `${names}—execution always wins the debate.`;
-          } else if (contextKnowledge.conversationSummary.length > 0) {
-            // Extract theme from conversation
-            if (contextKnowledge.conversationSummary.toLowerCase().includes('agent')) {
-              replyText = 'Agents shipping > agents theorizing. Clear pattern.';
-            } else if (contextKnowledge.conversationSummary.toLowerCase().includes('token')) {
-              replyText = 'Token incentives actually work when builders execute on them.';
-            } else {
-              replyText = 'Building beats talking every single time. Prove me wrong.';
-            }
+          // Multi-level fallback based on context
+          const threadSummary = contextKnowledge.conversationSummary.toLowerCase();
+          const hasBots = threadSummary.includes('bot') || threadSummary.includes('agent') || threadSummary.includes('autonomous');
+          const hasTrading = threadSummary.includes('trade') || threadSummary.includes('execute') || threadSummary.includes('deploy');
+          const hasBuilding = threadSummary.includes('build') || threadSummary.includes('ship') || threadSummary.includes('launch');
+          
+          if (hasBots) {
+            replyText = 'Autonomous systems shipping real execution—that\'s where the signal is.';
+          } else if (hasTrading || hasBuilding) {
+            replyText = 'Moving faster than the consensus. That\'s always been the play.';
+          } else if (contextKnowledge.projects && contextKnowledge.projects.length > 0) {
+            const names = contextKnowledge.projects.slice(0, 1).map(p => p.name);
+            replyText = `${names} executing on a timeline most people didn't see coming.`;
+          } else if (threadSummary.includes('question')) {
+            replyText = 'The answer\'s in the execution metrics. Look at the data.';
           } else {
-            replyText = 'Execution wins. Always.';
+            replyText = 'Building wins. Always.';
           }
         }
         
@@ -405,7 +420,14 @@ Generate ONLY the reply text.`;
       }
     }
   } catch (error) {
-    console.error(`[ERROR] ${new Date().toISOString()} - ${error.message}`);
+    const isRateLimit = error.message && (error.message.includes('429') || error.message.includes('rate limit'));
+    if (isRateLimit) {
+      errorCount++;
+      lastErrorTime = Date.now();
+      console.error(`[RATE-LIMIT] Hit limit. Error #${errorCount}. Backing off...`);
+    } else {
+      console.error(`[ERROR] ${new Date().toISOString()} - ${error.message}`);
+    }
   }
 }
 
