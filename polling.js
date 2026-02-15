@@ -9,6 +9,7 @@ import fs, { mkdirSync } from 'fs';
 import { buildContextKnowledge } from './src/stages/stage2-full-research.js';
 import { loadConversationMemory, getConversationContext, saveReplyToMemory, isFollowUp, getFollowUpContext } from './src/stages/stage2-conversation-memory.js';
 import { findThreadOrigin, analyzeThreadEvolution, buildContextFromOrigin } from './src/stages/stage1-thread-origin.js';
+import { extractTickers, extractProjectMentions, researchTickerProject, analyzeSentiment } from './src/stages/stage3-ticker-context.js';
 
 dotenv.config();
 
@@ -235,6 +236,36 @@ async function poll() {
           };
         }
         
+        // STAGE 3: Extract and research specific tickers/projects
+        let tickerContext = '';
+        try {
+          const fullThreadText = contextKnowledge.conversationSummary;
+          const tickers = extractTickers(fullThreadText);
+          
+          if (tickers.length > 0) {
+            console.log(`[TICKER-EXTRACT] Found ${tickers.length} tickers: ${tickers.join(', ')}`);
+            
+            // Research each ticker
+            const tickerData = [];
+            for (const ticker of tickers.slice(0, 3)) {
+              const research = await researchTickerProject(ticker, v2Client);
+              if (research) {
+                tickerData.push(research);
+                console.log(`[TICKER-RESEARCH] ✓ ${ticker}: ${research.sentiment} sentiment (${research.tweets} tweets)`);
+              }
+              await new Promise(r => setTimeout(r, 300)); // Rate limit
+            }
+            
+            if (tickerData.length > 0) {
+              tickerContext = tickerData
+                .map(t => `${t.ticker}: ${t.sentiment.toUpperCase()} (${t.tweets} mentions)\nContext: ${t.context.substring(0, 200)}`)
+                .join('\n\n---\n\n');
+            }
+          }
+        } catch (e) {
+          console.log(`[TICKER-EXTRACT] Error: ${e.message}`);
+        }
+        
         console.log(`[RESEARCH-COMPLETE] Ready to compose reply with full context`);
         
         // Build comprehensive research context for AI
@@ -273,8 +304,8 @@ async function poll() {
         
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
-        // Generate reply in GROK's style - ALWAYS make an attempt
-        // UNDERSTAND thread origin + current position
+        // Generate reply in GROK's style - PROJECT-SPECIFIC, not generic market commentary
+        // UNDERSTAND thread origin + current position + specific projects/tickers
         const systemPrompt = followUpContext 
           ? `You are @graisonbot replying in a Twitter thread. This is a FOLLOW-UP to your previous reply.
 THREAD CONTEXT:
@@ -282,12 +313,15 @@ ${threadOriginContext ? `- Original topic: "${threadOriginContext.originalTopic.
 - Your last reply: "${followUpContext.previousReply}"
 - They're now asking: "${mentionText}"
 
-INSTRUCTION: Don't repeat yourself. Answer the NEW question. Build on your point.
+PROJECT/TICKER CONTEXT:
+${tickerContext ? tickerContext.substring(0, 300) : 'No specific ticker'}
+
+INSTRUCTION: Don't repeat yourself. Answer the NEW question. Build on your point. If there's a specific project/ticker, make your reply about THAT project specifically.
 
 YOUR JOB:
 1. Address their NEW question directly
 2. Build on your previous point, don't repeat it
-3. Answer specifically
+3. If discussing a ticker/project, comment on WHETHER the action (buy dip, hold, etc) makes sense FOR THAT PROJECT
 4. Still witty, confident, sharp
 5. STATEMENT ONLY (no questions)
 6. Under 240 characters
@@ -295,20 +329,26 @@ YOUR JOB:
 Generate ONLY the reply text.`
           : `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
 
-THREAD ORIGIN (understand what we're talking about):
+THREAD ORIGIN:
 ${threadOriginContext ? `- Conversation started: "${threadOriginContext.originalTopic.substring(0, 100)}..."` : '- General discussion'}
 
-INSTRUCTION: Understand what this thread is about. Make a comment aligned with that topic.
+PROJECT/TICKER CONTEXT (THIS IS KEY):
+${tickerContext ? tickerContext.substring(0, 500) : 'No specific ticker mentioned'}
+
+CRITICAL INSTRUCTION: If a specific ticker/project is mentioned, your reply MUST be about THAT PROJECT specifically.
+- Don't give generic market wisdom
+- Know what the project is doing (from research above)
+- Comment on whether the action makes sense FOR THAT PROJECT
+- Example: Instead of "DCF models matter" → "BNKR is shipping execution—dip is where builders accumulate"
 
 YOUR JOB:
-1. Understand the original topic (above)
-2. Understand where the conversation has evolved to
-3. Make an informed comment that fits this context
-4. Be witty and confident
-5. STATEMENT ONLY - no questions, no hedging
-6. Under 240 characters
+1. If ticker/project mentioned: be specific to THAT project
+2. Comment on the action in context of what THAT project is doing
+3. Be witty and confident
+4. STATEMENT ONLY - no generic theory
+5. Under 240 characters
 
-CRITICAL: Stay aligned with the thread topic. Don't go off on tangents.
+CRITICAL: Stay PROJECT-SPECIFIC, not generic.
 
 Generate ONLY the reply text.`;
         
@@ -319,8 +359,8 @@ Generate ONLY the reply text.`;
           messages: [{
             role: 'user',
             content: followUpContext
-              ? `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\n\nPREVIOUS CONTEXT:\nYour last reply: "${followUpContext.previousReply}"\nTheir follow-up: "${mentionText}"\n\nTHREAD SO FAR:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nAnswer their follow-up. Don't repeat. Stay on topic.`
-              : `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general discussion'}"\n\nCONVERSATION HISTORY:\n${contextKnowledge.conversationSummary.substring(0, 400)}\n\nPROJECTS/TOPICS:\n${contextKnowledge.projects && contextKnowledge.projects.length > 0 ? contextKnowledge.projects.map(p => `@${p.name}`).join(', ') : 'general'}\n\nRESEARCH:\n${researchContextStr || '(see above)'}\n\nYOU'RE NOW BEING ASKED:\n${mentionText}\n\nReply aligned with the original topic and thread evolution.`
+              ? `THREAD: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\nLAST REPLY: "${followUpContext.previousReply}"\nFOLLOW-UP: "${mentionText}"\n\nTICKERS: ${tickerContext ? tickerContext.substring(0, 200) : 'None'}\n\nAnswer the follow-up. Don't repeat. If there's a ticker, make it about THAT project.`
+              : `THREAD: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general'}"\n\nCONVERSATION:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nTICKERS/PROJECTS:\n${tickerContext || contextKnowledge.projects?.map(p => `@${p.name}`).join(', ') || 'None mentioned'}\n\nQUESTION: ${mentionText}\n\nIf a ticker is mentioned, comment on whether the action makes sense for THAT project specifically (not generic market theory).`
           }]
         });
         
