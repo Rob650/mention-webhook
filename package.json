@@ -1,6 +1,6 @@
 {
   "name": "graisonbot-webhook",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Real-time mention webhook for @graisonbot - Production ready",
   "type": "module",
   "main": "filtered-stream-server.js",
