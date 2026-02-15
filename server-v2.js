@@ -27,6 +27,12 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: err.message });
+});
+
 // Initialize clients
 const twitterClient = new TwitterApi({
   appKey: process.env.TWITTER_API_KEY,
@@ -46,6 +52,13 @@ initDb();
 const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
+
+/**
+ * Root endpoint
+ */
+app.get('/', (req, res) => {
+  res.json({ message: 'Webhook server running', status: 'ok' });
+});
 
 /**
  * Health check endpoint
