@@ -45,6 +45,29 @@ function analyzeThreadEvolution(threadData) {
   
   const { root, allTweets } = threadData;
   
+  // Extract core message from original post
+  const originalText = root.text;
+  let coreMessage = 'Unknown topic';
+  
+  // Identify what the original post is about
+  if (originalText.toLowerCase().includes('buy') || originalText.toLowerCase().includes('sell') || originalText.toLowerCase().includes('price')) {
+    coreMessage = 'Price action / Trading decision';
+  } else if (originalText.toLowerCase().includes('ship') || originalText.toLowerCase().includes('launch') || originalText.toLowerCase().includes('build')) {
+    coreMessage = 'Product launch / Development milestone';
+  } else if (originalText.toLowerCase().includes('team') || originalText.toLowerCase().includes('hire') || originalText.toLowerCase().includes('join')) {
+    coreMessage = 'Team / Hiring / People';
+  } else if (originalText.toLowerCase().includes('fund') || originalText.toLowerCase().includes('raise') || originalText.toLowerCase().includes('capital')) {
+    coreMessage = 'Fundraising / Capital';
+  } else if (originalText.toLowerCase().includes('partnership') || originalText.toLowerCase().includes('integrat') || originalText.toLowerCase().includes('collab')) {
+    coreMessage = 'Partnership / Integration / Collaboration';
+  } else if (originalText.toLowerCase().includes('thanks') || originalText.toLowerCase().includes('honor') || originalText.toLowerCase().includes('grateful')) {
+    coreMessage = 'Gratitude / Appreciation / Milestone celebration';
+  } else if (originalText.toLowerCase().includes('announcement') || originalText.toLowerCase().includes('excited') || originalText.toLowerCase().includes('thrilled')) {
+    coreMessage = 'Announcement / Exciting news';
+  } else {
+    coreMessage = originalText.substring(0, 80);
+  }
+  
   // Analyze thread evolution
   const timeline = allTweets.map((t, idx) => ({
     position: idx + 1,
@@ -56,6 +79,7 @@ function analyzeThreadEvolution(threadData) {
   
   return {
     originalTopic: root.text,
+    coreMessage: coreMessage,
     originalTimestamp: root.created_at,
     threadLength: allTweets.length,
     timeline: timeline,

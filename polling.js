@@ -297,6 +297,7 @@ async function poll() {
         // Log thread origin context
         if (threadOriginContext && threadOriginContext.originalTopic) {
           console.log(`[CONTEXT] Thread started: "${threadOriginContext.originalTopic.substring(0, 60)}..."`);
+          console.log(`[CONTEXT] Core topic: ${threadOriginContext.coreMessage}`);
           console.log(`[CONTEXT] We're at position ${threadOriginContext.threadLength} in conversation`);
         } else {
           console.log(`[CONTEXT] Thread origin not determined, using conversation context`);
@@ -304,10 +305,15 @@ async function poll() {
         
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
-        // Generate reply in GROK's style - PROJECT-SPECIFIC, not generic market commentary
+        // Generate reply in GROK's style - TOPIC-FOCUSED, PROJECT-SPECIFIC, not random commentary
         // UNDERSTAND thread origin + current position + specific projects/tickers
         const systemPrompt = followUpContext 
           ? `You are @graisonbot replying in a Twitter thread. This is a FOLLOW-UP to your previous reply.
+
+CRITICAL: THE ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'unknown'}
+
+Your reply MUST be related to that topic. Don't go off on tangents.
+
 THREAD CONTEXT:
 ${threadOriginContext ? `- Original topic: "${threadOriginContext.originalTopic.substring(0, 80)}..."` : ''}
 - Your last reply: "${followUpContext.previousReply}"
@@ -316,12 +322,12 @@ ${threadOriginContext ? `- Original topic: "${threadOriginContext.originalTopic.
 PROJECT/TICKER CONTEXT:
 ${tickerContext ? tickerContext.substring(0, 300) : 'No specific ticker'}
 
-INSTRUCTION: Don't repeat yourself. Answer the NEW question. Build on your point. If there's a specific project/ticker, make your reply about THAT project specifically.
+INSTRUCTION: Answer their follow-up while staying ON TOPIC about ${threadOriginContext?.coreMessage || 'the thread topic'}.
 
 YOUR JOB:
-1. Address their NEW question directly
+1. Address their question directly
 2. Build on your previous point, don't repeat it
-3. If discussing a ticker/project, comment on WHETHER the action (buy dip, hold, etc) makes sense FOR THAT PROJECT
+3. STAY ON TOPIC - reply should be about ${threadOriginContext?.coreMessage || 'the original topic'}, not something else
 4. Still witty, confident, sharp
 5. STATEMENT ONLY (no questions)
 6. Under 240 characters
@@ -329,26 +335,30 @@ YOUR JOB:
 Generate ONLY the reply text.`
           : `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
 
-THREAD ORIGIN:
-${threadOriginContext ? `- Conversation started: "${threadOriginContext.originalTopic.substring(0, 100)}..."` : '- General discussion'}
+CRITICAL - UNDERSTAND WHAT THIS POST IS ACTUALLY ABOUT:
+Core Topic: ${threadOriginContext?.coreMessage || 'General discussion'}
+Original: "${threadOriginContext?.originalTopic.substring(0, 100) || 'N/A'}..."
 
-PROJECT/TICKER CONTEXT (THIS IS KEY):
+YOUR REPLY MUST BE RELATED TO THIS TOPIC. Don't reply with something unrelated.
+
+PROJECT/TICKER CONTEXT:
 ${tickerContext ? tickerContext.substring(0, 500) : 'No specific ticker mentioned'}
 
-CRITICAL INSTRUCTION: If a specific ticker/project is mentioned, your reply MUST be about THAT PROJECT specifically.
-- Don't give generic market wisdom
-- Know what the project is doing (from research above)
-- Comment on whether the action makes sense FOR THAT PROJECT
-- Example: Instead of "DCF models matter" → "BNKR is shipping execution—dip is where builders accumulate"
+INSTRUCTION: Make a comment that is DIRECTLY RELATED to the original post's topic.
+- If it's about a product launch → comment on the launch, not something else
+- If it's about fundraising → comment on the fundraising, not price action
+- If it's about appreciation/gratitude → comment on that, not cynical takes
+- If there's a ticker → comment on that project in context of the original topic
 
 YOUR JOB:
-1. If ticker/project mentioned: be specific to THAT project
-2. Comment on the action in context of what THAT project is doing
-3. Be witty and confident
-4. STATEMENT ONLY - no generic theory
-5. Under 240 characters
+1. Understand what the ORIGINAL post is about (see above)
+2. Make sure your reply is RELATED to that topic
+3. If ticker/project mentioned: be specific, not generic
+4. Be witty and confident
+5. STATEMENT ONLY - no questions
+6. Under 240 characters
 
-CRITICAL: Stay PROJECT-SPECIFIC, not generic.
+CRITICAL: DON'T MAKE OFF-TOPIC REPLIES. Stay focused on what the original post is actually saying.
 
 Generate ONLY the reply text.`;
         
@@ -359,8 +369,8 @@ Generate ONLY the reply text.`;
           messages: [{
             role: 'user',
             content: followUpContext
-              ? `THREAD: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\nLAST REPLY: "${followUpContext.previousReply}"\nFOLLOW-UP: "${mentionText}"\n\nTICKERS: ${tickerContext ? tickerContext.substring(0, 200) : 'None'}\n\nAnswer the follow-up. Don't repeat. If there's a ticker, make it about THAT project.`
-              : `THREAD: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general'}"\n\nCONVERSATION:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nTICKERS/PROJECTS:\n${tickerContext || contextKnowledge.projects?.map(p => `@${p.name}`).join(', ') || 'None mentioned'}\n\nQUESTION: ${mentionText}\n\nIf a ticker is mentioned, comment on whether the action makes sense for THAT project specifically (not generic market theory).`
+              ? `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general'}\nTHREAD: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\nLAST REPLY: "${followUpContext.previousReply}"\nFOLLOW-UP: "${mentionText}"\n\nTICKERS: ${tickerContext ? tickerContext.substring(0, 200) : 'None'}\n\nAnswer the follow-up WHILE STAYING ON TOPIC about ${threadOriginContext?.coreMessage || 'the original topic'}. Don't repeat. Make it relevant to what the post is actually about.`
+              : `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general discussion'}\nTHREAD: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general'}"\n\nCONVERSATION:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nTICKERS/PROJECTS:\n${tickerContext || contextKnowledge.projects?.map(p => `@${p.name}`).join(', ') || 'None'}\n\nQUESTION: ${mentionText}\n\nMake a reply that is RELATED to the original topic (${threadOriginContext?.coreMessage || 'the post'}). Don't go off on random tangents. If a ticker is mentioned, comment on it in context of the original topic.`
           }]
         });
         
