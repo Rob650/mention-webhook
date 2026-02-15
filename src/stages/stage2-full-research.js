@@ -11,9 +11,14 @@
 
 import { TwitterApi } from 'twitter-api-v2';
 import { Anthropic } from '@anthropic-ai/sdk';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const v2Client = new TwitterApi(process.env.TWITTER_BEARER_TOKEN).readOnlyClient;
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ 
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
 
 async function fetchFullConversation(conversationId, maxTweets = 20) {
   try {
@@ -35,41 +40,34 @@ async function fetchFullConversation(conversationId, maxTweets = 20) {
 async function identifyTopics(conversationThread) {
   if (!conversationThread || conversationThread.length === 0) return [];
   
-  // Use AI to identify topics mentioned
+  // Simple keyword extraction - no AI needed
   const threadText = conversationThread
     .map(t => t.text)
-    .join('\n---\n');
+    .join(' ');
   
-  try {
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: `Extract ALL topics, projects, companies, and concepts mentioned in this thread:
-
-${threadText}
-
-Return JSON array format:
-[
-  { "name": "TopicName", "type": "project|company|concept|technology", "mentions": 2 },
-  ...
-]
-
-List each unique topic once with mention count.`
-      }]
-    });
-    
-    const text = msg.content[0].text;
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+  // Find @mentions and capitalized words (likely project/company names)
+  const mentions = threadText.match(/@[\w]+/g) || [];
+  const capitalized = threadText.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g) || [];
+  
+  // Extract unique topics
+  const topics = new Map();
+  
+  // Add mentions as companies/projects
+  mentions.forEach(m => {
+    const name = m.substring(1);
+    topics.set(name, { name, type: 'project', mentions: (threadText.match(new RegExp(m, 'g')) || []).length });
+  });
+  
+  // Add capitalized terms (concepts/technologies)
+  capitalized.forEach(term => {
+    if (topics.size < 8 && term.length > 3) {
+      if (!topics.has(term)) {
+        topics.set(term, { name: term, type: 'concept', mentions: (threadText.match(new RegExp(term, 'g')) || []).length });
+      }
     }
-  } catch (e) {
-    console.error(`[ERROR] Failed to identify topics: ${e.message}`);
-  }
+  });
   
-  return [];
+  return Array.from(topics.values()).slice(0, 10);
 }
 
 async function deepResearchTopic(topic) {
