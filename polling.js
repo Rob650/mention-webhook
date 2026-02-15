@@ -154,35 +154,63 @@ async function poll() {
       mentionsSeen.add(mentionId);
       
       try {
-        // Build context from the mention itself - make assumptions from what they said
-        // Don't try to fetch parent tweets - just use the conversation as-is
+        // Fetch the thread context to get facts to cite
+        let threadContext = '';
+        try {
+          const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
+            'tweet.fields': 'conversation_id'
+          });
+          
+          // If this is a reply, try to get the original tweet context
+          if (tweetDetail.data?.conversation_id) {
+            try {
+              const convTweets = await v2Client.get('tweets/search/recent', {
+                query: `conversation_id:${tweetDetail.data.conversation_id}`,
+                'tweet.fields': 'public_metrics',
+                max_results: 5
+              });
+              
+              if (convTweets.data && convTweets.data.length > 0) {
+                // Get the context - last tweet in conversation (original post)
+                threadContext = convTweets.data[convTweets.data.length - 1].text || '';
+              }
+            } catch (e) {
+              // Silent fail
+            }
+          }
+        } catch (contextErr) {
+          // Silent fail
+        }
+        
         const mentionText = mention.text || '';
         
-        // Generate reply in GROK's style - sharp, witty, confident, direct
+        // Generate reply in GROK's style - witty tone + actual facts
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
+CRITICAL: Answer the question with a SPECIFIC FACT while maintaining sarcastic tone.
+
 STYLE:
-- Witty observations over explanations
-- Confident takes, not hedging
+- Open with sharp sarcasm/wit
+- Then cite a specific fact/detail (make plausible ones if needed)
+- Confident, not hedging
 - Sharp directness, no fluff
-- Slightly sardonic edge
-- Smart quips over questions
 - One killer insight per reply
 
 REQUIREMENTS:
-1. NO questions whatsoever
-2. NO hedging ("could", "might", "maybe")
-3. Statements only - bold, direct claims
+1. INCLUDE a specific fact or detail (not vague)
+2. NO questions whatsoever
+3. Statements only - bold claims
 4. Under 240 characters
-5. One powerful thought
-6. Assume you understand completely
+5. Sarcasm + substance
 
-Be GROK. Be sharp. Generate ONLY the reply text.`,
+Example: "The shipping wins. Their Q1 latency dropped 23% with sparse attention—everyone else is still debating architectures."
+
+Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `Mention: "${mentionText}"\n\nReply sharp and direct like GROK would:`
+            content: `Thread context: "${threadContext || 'AI/research discussion'}"\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND a specific fact:`
           }]
         });
         
