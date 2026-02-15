@@ -78,15 +78,16 @@ async function poll() {
     mentionCount = mentions.length;
     console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
     
-    // Reply to first unreplied mention (max 1 per cycle to avoid spam)
+    // Reply to first unreplied mention (EXACTLY ONE PER CYCLE - no spam, no duplicate replies)
     let repliedThisCycle = 0;
     
     for (const mention of mentions) {
-      if (repliedThisCycle > 0) break; // Only one reply per cycle
+      // HARD STOP: Only one reply per 30-second cycle
+      if (repliedThisCycle > 0) break;
       
-      // Skip if we've already replied to THIS SPECIFIC MENTION
+      // NEVER reply to the same mention twice - check persistent storage
       if (repliedMentions.has(mention.id)) {
-        console.log(`[SKIP] Already replied to mention ${mention.id.substring(0, 8)}...`);
+        console.log(`[SKIP] Already replied to ${mention.id.substring(0, 8)}... (never replying again)`);
         continue;
       }
       
@@ -98,35 +99,51 @@ async function poll() {
         // Generate assumption-based reply with Claude
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 120,
-          system: `You are @graisonbot. Someone mentioned you in a Twitter thread and said something.
-Your response MUST:
-1. NOT ask any questions
-2. NOT say "I need context" or "what do you mean?"
-3. NOT say "I'd need more info" or "just to be clear"
-4. Make a direct statement or answer
-5. Assume you understand what they're asking
-6. Be conversational and natural
-7. Be under 240 characters
-DO NOT generate a question. Generate a statement or answer.`,
+          max_tokens: 90, // Keep it short so it fits naturally in 240 chars with complete sentences
+          system: `You are @graisonbot. Reply to a mention in a Twitter thread.
+REQUIREMENTS:
+1. NO questions - only statements
+2. NO "I need context" or "what do you mean?"
+3. Complete sentences only - never cut off mid-word
+4. Under 240 characters total
+5. Direct answer assuming you understand
+6. Conversational tone
+7. One clear thought, not multiple
+
+Generate ONLY the reply text, nothing else.`,
           messages: [{
             role: 'user',
-            content: `Generate a reply to: "${mentionText}"\n\nONLY generate a statement or answer, never a question or request for clarification.`
+            content: `Mention: "${mentionText}"\n\nReply with a direct statement (no questions, complete sentences only):`
           }]
         });
         
-        const replyText = msg.content[0].text.trim().substring(0, 280);
+        let replyText = msg.content[0].text.trim();
         
-        // Filter out replies that ask questions or ask for context
+        // Ensure we don't cut off mid-sentence - intelligently truncate at word boundary
+        if (replyText.length > 240) {
+          // Find the last space before 240 chars
+          const truncated = replyText.substring(0, 240);
+          const lastSpace = truncated.lastIndexOf(' ');
+          if (lastSpace > 200) { // Only truncate at space if we're losing less than 40 chars
+            replyText = truncated.substring(0, lastSpace);
+            // Remove trailing punctuation that might be incomplete
+            replyText = replyText.replace(/[\.,;:]*$/, '');
+          } else {
+            replyText = truncated.substring(0, 240);
+          }
+        }
+        
+        // STRICT FILTER: Reject any reply that asks a question or requests clarification
+        // This ensures replies are direct statements with understanding, not questions
         const badPatterns = ['?', "i'd need", 'need more', 'what do', 'could you', 'can you share', 'to be clear', 'just to clarify'];
         const isQuestion = badPatterns.some(pattern => replyText.toLowerCase().includes(pattern));
         
         console.log(`[MENTION] "${mention.text.substring(0, 50)}..."`);
-        console.log(`[REPLY-DRAFT] "${replyText.substring(0, 50)}..."`);
+        console.log(`[REPLY] "${replyText.substring(0, 70)}..."`);
         
-        // Only post if it doesn't ask a question
+        // REJECT if it contains any question or clarification request
         if (isQuestion) {
-          console.log(`[SKIP-Q] Filtered out question reply`);
+          console.log(`[FILTER] Rejected (contains question/clarification request)`);
           continue;
         }
         
@@ -144,7 +161,7 @@ DO NOT generate a question. Generate a statement or answer.`,
             repliedThisCycle++;
             repliedMentions.add(mention.id); // Mark THIS mention as replied to
             saveRepliedMentions(); // Persist the list
-            console.log(`[REPLY] ✓ Posted to mention ${mention.id.substring(0, 8)}...`);
+            console.log(`[POSTED] ✓ Reply sent (${replyText.length} chars) - Never replying to this again`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
