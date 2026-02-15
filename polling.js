@@ -28,32 +28,32 @@ const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
 
-// Persistent deduplication by MENTION ID (one reply per mention, period)
-const REPLIED_FILE = '/tmp/replied-mentions.json';
-let repliedMentions = new Set();
+// Persistent tracking by CONVERSATION_ID - one conversation = max 2 replies TOTAL
+const REPLIED_FILE = '/tmp/replied-conversations.json';
+let conversationReplies = {}; // { conversation_id: reply_count }
 
-function loadRepliedMentions() {
+function loadRepliedConversations() {
   try {
     if (fs.existsSync(REPLIED_FILE)) {
       const data = JSON.parse(fs.readFileSync(REPLIED_FILE, 'utf8'));
-      repliedMentions = new Set(data);
-      console.log(`[INIT] Loaded ${repliedMentions.size} previously-replied mentions`);
+      conversationReplies = data;
+      console.log(`[INIT] Loaded conversation tracking for ${Object.keys(conversationReplies).length} conversations`);
     }
   } catch (e) {
-    console.error(`[INIT] Error loading replied mentions: ${e.message}`);
+    console.error(`[INIT] Error loading replied conversations: ${e.message}`);
   }
 }
 
-function saveRepliedMentions() {
+function saveRepliedConversations() {
   try {
-    fs.writeFileSync(REPLIED_FILE, JSON.stringify(Array.from(repliedMentions)), 'utf8');
+    fs.writeFileSync(REPLIED_FILE, JSON.stringify(conversationReplies), 'utf8');
   } catch (e) {
-    console.error(`[SAVE] Error saving replied mentions: ${e.message}`);
+    console.error(`[SAVE] Error saving replied conversations: ${e.message}`);
   }
 }
 
 // Load on startup
-loadRepliedMentions();
+loadRepliedConversations();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -78,16 +78,19 @@ async function poll() {
     mentionCount = mentions.length;
     console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
     
-    // Reply to first unreplied mention (EXACTLY ONE PER CYCLE - no spam, no duplicate replies)
+    // Reply to first unreplied conversation (EXACTLY ONE PER CYCLE, MAX 2 PER CONVERSATION)
     let repliedThisCycle = 0;
     
     for (const mention of mentions) {
       // HARD STOP: Only one reply per 30-second cycle
       if (repliedThisCycle > 0) break;
       
-      // NEVER reply to the same mention twice - check persistent storage
-      if (repliedMentions.has(mention.id)) {
-        console.log(`[SKIP] Already replied to ${mention.id.substring(0, 8)}... (never replying again)`);
+      const convId = mention.conversation_id || mention.id;
+      const convReplyCount = conversationReplies[convId] || 0;
+      
+      // NEVER reply more than 2 times to the same conversation thread
+      if (convReplyCount >= 2) {
+        console.log(`[SKIP] Conversation ${convId.substring(0, 8)}... already has 2 replies (max reached)`);
         continue;
       }
       
@@ -96,24 +99,31 @@ async function poll() {
         // Don't try to fetch parent tweets - just use the conversation as-is
         const mentionText = mention.text || '';
         
-        // Generate assumption-based reply with Claude
+        // Generate reply in GROK's style - sharp, witty, confident, direct
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 90, // Keep it short so it fits naturally in 240 chars with complete sentences
-          system: `You are @graisonbot. Reply to a mention in a Twitter thread.
-REQUIREMENTS:
-1. NO questions - only statements
-2. NO "I need context" or "what do you mean?"
-3. Complete sentences only - never cut off mid-word
-4. Under 240 characters total
-5. Direct answer assuming you understand
-6. Conversational tone
-7. One clear thought, not multiple
+          max_tokens: 90,
+          system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
+STYLE:
+- Witty observations over explanations
+- Confident takes, not hedging
+- Sharp directness, no fluff
+- Slightly sardonic edge
+- Smart quips over questions
+- One killer insight per reply
 
-Generate ONLY the reply text, nothing else.`,
+REQUIREMENTS:
+1. NO questions whatsoever
+2. NO hedging ("could", "might", "maybe")
+3. Statements only - bold, direct claims
+4. Under 240 characters
+5. One powerful thought
+6. Assume you understand completely
+
+Be GROK. Be sharp. Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `Mention: "${mentionText}"\n\nReply with a direct statement (no questions, complete sentences only):`
+            content: `Mention: "${mentionText}"\n\nReply sharp and direct like GROK would:`
           }]
         });
         
@@ -159,9 +169,11 @@ Generate ONLY the reply text, nothing else.`,
           if (posted?.data?.id) {
             replyCount++;
             repliedThisCycle++;
-            repliedMentions.add(mention.id); // Mark THIS mention as replied to
-            saveRepliedMentions(); // Persist the list
-            console.log(`[POSTED] ✓ Reply sent (${replyText.length} chars) - Never replying to this again`);
+            // Track this conversation - increment reply count
+            conversationReplies[convId] = (conversationReplies[convId] || 0) + 1;
+            const convReplyCount = conversationReplies[convId];
+            saveRepliedConversations(); // Persist the tracking
+            console.log(`[POSTED] ✓ Reply ${convReplyCount}/2 to conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
