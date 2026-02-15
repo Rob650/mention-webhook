@@ -213,41 +213,48 @@ async function poll() {
         
         console.log(`[RESEARCH-COMPLETE] Ready to compose reply with full context`);
         
-        // Build research context string for AI
+        // Build comprehensive research context for AI
         let researchContextStr = '';
         if (contextKnowledge.research && contextKnowledge.research.length > 0) {
           researchContextStr = contextKnowledge.research
-            .map(r => `TOPIC: ${r.topic} (${r.type})\nRESEARCH:\n${r.research}`)
+            .map(r => {
+              const summary = r.research.substring(0, 300); // Limit per project
+              return `PROJECT: ${r.topic}\n${summary}`;
+            })
             .join('\n\n---\n\n');
         }
         
-        // Generate reply in GROK's style - backed by FULL research
+        // Log what we're about to pass to AI
+        console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched`);
+        
+        // Generate reply in GROK's style - backed by FULL research on ALL projects
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-INSTRUCTION: You've done FULL RESEARCH on this thread. You understand the topics, the context, and what's being discussed.
+INSTRUCTION: Multiple projects were mentioned and researched. Compare/contrast them using the research data.
 
 YOUR JOB:
-1. Use the research & conversation context provided
-2. Reference specific facts from research/thread
-3. Make a sharp, informed reply that shows you understand
-4. Witty + substantive (not just sarcasm)
+1. Reference MULTIPLE projects with specific facts from research
+2. Show you understand the differences between them
+3. Use real data (metrics, features, recent updates)
+4. Sharp wit backed by multi-project knowledge
 5. Under 240 characters
 
-RULES:
-- Point to what was actually said/researched
-- NO invented claims
-- Confident tone backed by actual knowledge
-- One killer insight
+CRITICAL RULES:
+- Compare/contrast different projects when multiple exist
+- Point to specific research findings
+- NO invented claims or metrics
+- Confident tone backed by actual research
+- Show depth of understanding
 
-Example ✅: "Solana agents avg 23% better latency—while everyone else still building."
-Example ❌: Generic statement with no evidence
+Example ✅: "Limitless shipped X feature, bankrbot doing Y—key difference is Z metrics."
+Example ❌: "Projects are all shipping" (vague, no data)
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `CONVERSATION THREAD:\n${contextKnowledge.conversationSummary}\n\nTOPICS DISCUSSED:\n${contextKnowledge.topics.map(t => `- ${t.name} (${t.type}, ${t.mentions} mentions)`).join('\n')}\n\nRESEARCH FINDINGS:\n${researchContextStr || 'No deep research performed'}\n\nYOUR REPLY TO:\n${mentionText}\n\nCompose a smart reply backed by this research.`
+            content: `THREAD (${contextKnowledge.threadLength} tweets):\n${contextKnowledge.conversationSummary}\n\nPROJECTS RESEARCHED (${contextKnowledge.research.length}):\n${researchContextStr || 'None researched'}\n\nQUESTION:\n${mentionText}\n\nReply comparing these projects with specific data from your research.`
           }]
         });
         

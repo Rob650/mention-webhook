@@ -72,8 +72,13 @@ async function identifyTopics(conversationThread) {
 
 async function deepResearchTopic(topic) {
   try {
-    // Brave search for the topic
-    const searchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(topic.name)}&count=10`;
+    // For projects (@mentions), search specifically for recent updates/news
+    let query = topic.name;
+    if (topic.type === 'project') {
+      query = `${topic.name} latest updates 2025 OR ${topic.name} shipping OR ${topic.name} announcement`;
+    }
+    
+    const searchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&freshness=pw`;
     const res = await fetch(searchUrl, {
       headers: {
         'Accept': 'application/json',
@@ -86,16 +91,24 @@ async function deepResearchTopic(topic) {
     const data = await res.json();
     if (!data.web || !data.web.results) return null;
     
-    // Extract useful information
+    // Extract useful information - prioritize recent news
     const results = data.web.results.slice(0, 5);
-    const researchSummary = results
-      .map(r => `${r.title}\n${r.description}`)
+    const researchItems = results.map(r => ({
+      title: r.title,
+      snippet: r.description,
+      url: r.url,
+      timestamp: r.page_age
+    }));
+    
+    const researchSummary = researchItems
+      .map(r => `[${r.title}] ${r.snippet}`)
       .join('\n\n');
     
     return {
       topic: topic.name,
       type: topic.type,
       research: researchSummary,
+      items: researchItems,
       sources: results.length
     };
   } catch (e) {
@@ -111,21 +124,22 @@ async function buildContextKnowledge(conversationThread) {
   const topics = await identifyTopics(conversationThread);
   console.log(`[RESEARCH] Identified ${topics.length} topics`);
   
-  if (topics.length === 0) {
-    return {
-      conversationSummary: conversationThread.map(t => t.text).join('\n'),
-      topics: [],
-      research: []
-    };
-  }
+  // PRIORITIZE PROJECTS (@mentions) - research all of them
+  const projects = topics.filter(t => t.type === 'project');
+  const concepts = topics.filter(t => t.type !== 'project');
   
-  // Research each topic (max 5 to avoid rate limits)
+  console.log(`[RESEARCH] Found ${projects.length} projects to research`);
+  
+  // Research all projects (critical for multi-project comparison)
   const research = [];
-  for (const topic of topics.slice(0, 5)) {
-    console.log(`[RESEARCH] Researching: ${topic.name}`);
+  const projectsToResearch = projects.length > 0 ? projects : topics;
+  
+  for (const topic of projectsToResearch.slice(0, 8)) {
+    console.log(`[RESEARCH] Researching: ${topic.name} (${topic.type})`);
     const result = await deepResearchTopic(topic);
     if (result) {
       research.push(result);
+      console.log(`[RESEARCH] ✓ Got ${result.sources} sources on ${topic.name}`);
     }
     // Rate limit
     await new Promise(r => setTimeout(r, 500));
@@ -139,6 +153,7 @@ async function buildContextKnowledge(conversationThread) {
   return {
     conversationSummary,
     topics,
+    projects,
     research,
     threadLength: conversationThread.length
   };
