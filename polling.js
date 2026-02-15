@@ -99,25 +99,36 @@ async function poll() {
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 120,
-          system: `You're @graisonbot, an AI expert. You're in a Twitter thread.
-STRICT RULES:
-- NEVER say "I'd need more context" or "what do you mean?" - just give an answer
-- NEVER ask for clarification
-- ASSUME you understand the context
-- Reply as if you're having a normal conversation
-- If they're vague, MAKE AN ASSUMPTION and answer that
-- Be direct, conversational, specific
-- Max 240 chars`,
+          system: `You are @graisonbot. Someone mentioned you in a Twitter thread and said something.
+Your response MUST:
+1. NOT ask any questions
+2. NOT say "I need context" or "what do you mean?"
+3. NOT say "I'd need more info" or "just to be clear"
+4. Make a direct statement or answer
+5. Assume you understand what they're asking
+6. Be conversational and natural
+7. Be under 240 characters
+DO NOT generate a question. Generate a statement or answer.`,
           messages: [{
             role: 'user',
-            content: `They mentioned you and said: "${mentionText}"\n\nReply like a human would - just answer.`
+            content: `Generate a reply to: "${mentionText}"\n\nONLY generate a statement or answer, never a question or request for clarification.`
           }]
         });
         
         const replyText = msg.content[0].text.trim().substring(0, 280);
         
+        // Filter out replies that ask questions or ask for context
+        const badPatterns = ['?', "i'd need", 'need more', 'what do', 'could you', 'can you share', 'to be clear', 'just to clarify'];
+        const isQuestion = badPatterns.some(pattern => replyText.toLowerCase().includes(pattern));
+        
         console.log(`[MENTION] "${mention.text.substring(0, 50)}..."`);
         console.log(`[REPLY-DRAFT] "${replyText.substring(0, 50)}..."`);
+        
+        // Only post if it doesn't ask a question
+        if (isQuestion) {
+          console.log(`[SKIP-Q] Filtered out question reply`);
+          continue;
+        }
         
         // Post reply via v2.tweet
         try {
@@ -133,7 +144,7 @@ STRICT RULES:
             repliedThisCycle++;
             repliedMentions.add(mention.id); // Mark THIS mention as replied to
             saveRepliedMentions(); // Persist the list
-            console.log(`[REPLY] ✓ Posted to mention ${mention.id.substring(0, 8)}... (saved)`);
+            console.log(`[REPLY] ✓ Posted to mention ${mention.id.substring(0, 8)}...`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
