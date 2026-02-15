@@ -31,155 +31,95 @@ const PORT = process.env.PORT || 3000;
 let lastProcessedTweetId = null;
 let mentionCount = 0;
 let replyCount = 0;
-let myUsername = null;
 
 app.get('/', (req, res) => {
   res.status(200).json({ 
-    message: 'Polling-based mention handler for @graisonbot', 
-    status: 'ok',
-    method: 'polling',
-    interval: '30 seconds'
+    message: 'Polling-based mention handler', 
+    status: 'ok'
   });
 });
 
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
-    timestamp: new Date().toISOString(),
     mentions_received: mentionCount,
-    replies_sent: replyCount,
-    last_processed_tweet_id: lastProcessedTweetId
+    replies_sent: replyCount
   });
 });
 
 app.get('/stats', async (req, res) => {
   try {
     const stats = await getStats();
-    const costPerReply = 0.014;
-    const dailyCost = costPerReply * (stats.total_replies / 7 || 1);
-
     res.json({
       total_replies: stats.total_replies,
-      unique_users: stats.unique_users,
-      last_reply: stats.last_reply,
-      cost_per_reply: `$${costPerReply.toFixed(3)}`,
-      estimated_daily_average: `$${dailyCost.toFixed(2)}`,
-      estimated_monthly: `$${(dailyCost * 30).toFixed(2)}`,
-      uptime_seconds: process.uptime(),
-      polling_interval_seconds: 30,
-      last_processed_tweet_id: lastProcessedTweetId,
       mentions_received: mentionCount,
-      replies_sent: replyCount
+      replies_sent: replyCount,
+      uptime_seconds: process.uptime()
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json({ error: error.message });
   }
 });
 
-async function getMyUsername() {
-  try {
-    const me = await v2Client.me();
-    return me.data.username;
-  } catch (error) {
-    logger.error('Failed to get username', { error: error.message });
-    return null;
-  }
-}
-
 async function pollForMentions() {
   try {
-    if (!myUsername) {
-      myUsername = await getMyUsername();
-      if (!myUsername) return;
-    }
+    const me = await v2Client.me();
+    const query = `@${me.data.username} -is:retweet`;
 
-    logger.info(`🔍 Polling for mentions to @${myUsername}...`);
-
-    const query = `@${myUsername} -is:retweet`;
-    const params = {
+    const response = await v2Client.get('tweets/search/recent', {
       query: query,
-      'tweet.fields': 'created_at,author_id,conversation_id',
+      'tweet.fields': 'created_at,author_id',
       'user.fields': 'username,name,verified',
       'expansions': 'author_id',
-      max_results: 10
-    };
+      max_results: 10,
+      since_id: lastProcessedTweetId
+    });
 
-    if (lastProcessedTweetId) {
-      params.since_id = lastProcessedTweetId;
-    }
-
-    const response = await v2Client.get('tweets/search/recent', params);
-
-    if (!response.data || response.data.length === 0) {
-      logger.info('✓ No new mentions');
+    const tweets = response.data || [];
+    
+    if (tweets.length === 0) {
       return;
     }
 
-    logger.info(`Found ${response.data.length} new mentions`);
-
-    for (const tweet of response.data) {
+    for (const tweet of tweets) {
       const author = response.includes?.users?.find(u => u.id === tweet.author_id);
-
       if (!author) continue;
 
-      logger.mention(author.username, tweet.text, author.verified);
       mentionCount++;
 
-      if (!author.verified) {
-        logger.info(`Skipping unverified: @${author.username}`);
-        continue;
-      }
-
-      if (await hasRecentReply(tweet.author_id)) {
-        logger.warn(`Already replied to @${author.username} recently`);
-        continue;
-      }
+      if (!author.verified) continue;
+      if (await hasRecentReply(tweet.author_id)) continue;
 
       const reply = await generateReply(tweet.text);
-      if (!reply) {
-        logger.error('Reply generation failed');
-        continue;
-      }
+      if (!reply) continue;
 
       const posted = await postReply(tweet.id, reply);
       if (posted) {
         replyCount++;
         await addReply(tweet.author_id, tweet.id, reply);
-        logger.success('Reply posted', {
-          tweet_id: posted,
-          author: author.username,
-          cost: '$0.014'
-        });
       }
     }
 
-    if (response.meta.newest_id) {
-      lastProcessedTweetId = response.meta.newest_id;
-      logger.info(`Updated last_processed_tweet_id: ${lastProcessedTweetId}`);
+    if (tweets.length > 0) {
+      lastProcessedTweetId = tweets[0].id;
     }
 
   } catch (error) {
-    logger.error('Polling error', { error: error.message });
+    console.error('[POLL ERROR]', error.message);
   }
 }
 
-async function generateReply(mentionText) {
+async function generateReply(text) {
   try {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-20250514',
       max_tokens: 150,
       temperature: 0.7,
-      system: `You are @graisonbot. Reply directly, specific, data-driven. Max 250 chars. No emojis.`,
-      messages: [{
-        role: 'user',
-        content: `Tweet: "${mentionText}"\n\nReply (max 250 chars):`
-      }]
+      system: 'Reply to this tweet. Max 250 chars. Be specific and helpful.',
+      messages: [{ role: 'user', content: `Tweet: "${text}"\n\nReply:` }]
     });
-
-    const replyText = response.content[0].text.trim();
-    return replyText.length > 280 ? replyText.substring(0, 275) + '...' : replyText;
+    return response.content[0].text.trim().substring(0, 280);
   } catch (error) {
-    logger.error('Reply generation failed', { error: error.message });
     return null;
   }
 }
@@ -191,33 +131,26 @@ async function postReply(replyToId, text) {
     });
     return response.data?.id || null;
   } catch (error) {
-    logger.error('Failed to post reply', { error: error.message });
     return null;
   }
 }
 
-app.listen(PORT, '0.0.0.0', async () => {
-  logger.info(`🚀 POLLING MENTION HANDLER`);
-  logger.info(`Listening on port ${PORT}`);
-  logger.info('Using Twitter v2 search/recent API');
-  logger.info('Polling interval: every 30 seconds');
-  logger.info('');
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log('🚀 Server listening on port', PORT);
   
-  try {
-    logger.info('Starting initial poll...');
-    await pollForMentions();
-    logger.success('Initial poll complete');
-    
-    logger.info('Starting polling interval (30 seconds)...');
-    setInterval(pollForMentions, 30000);
-    logger.success('Polling interval started');
-  } catch (error) {
-    logger.error('Failed to start polling', { error: error.message });
-  }
+  // Start polling immediately
+  pollForMentions().then(() => {
+    console.log('Initial poll complete');
+  }).catch(err => {
+    console.error('Initial poll error:', err.message);
+  });
+
+  // Then repeat every 30 seconds
+  setInterval(pollForMentions, 30000);
+  console.log('✅ Polling started (30 second intervals)');
 });
 
 process.on('SIGINT', () => {
-  logger.info('Shutting down gracefully...');
-  logger.success('Polling stopped', { total_mentions: mentionCount, total_replies: replyCount });
+  server.close();
   process.exit(0);
 });
