@@ -63,14 +63,13 @@ async function pollForMentions() {
     const query = `@${me.data.username} -is:retweet`;
     console.log('[POLL] Query:', query);
 
-    const response = await v2Client.get('tweets/search/recent', {
-      query: query,
-      'tweet.fields': 'created_at,author_id',
-      'user.fields': 'username,name,verified',
-      'expansions': 'author_id',
-      max_results: 10,
-      since_id: lastProcessedTweetId
-    });
+    let response;
+    try {
+      response = await v2Client.search(query);
+    } catch (apiError) {
+      console.error('[POLL] API Error:', apiError.message.substring(0, 100));
+      return;
+    }
 
     const tweets = response.data || [];
     console.log('[POLL] Found tweets:', tweets.length);
@@ -80,44 +79,26 @@ async function pollForMentions() {
       return;
     }
 
-    for (const tweet of tweets) {
-      const author = response.includes?.users?.find(u => u.id === tweet.author_id);
-      if (!author) {
-        console.log('[POLL] Could not find author for tweet:', tweet.id);
-        continue;
-      }
-
-      console.log('[POLL] Processing mention from @' + author.username);
-      mentionCount++;
-
-      if (!author.verified) {
-        console.log('[POLL] Skipping unverified user');
-        continue;
-      }
-      if (await hasRecentReply(tweet.author_id)) {
-        console.log('[POLL] Already replied to this user');
-        continue;
-      }
-
-      const reply = await generateReply(tweet.text);
-      if (!reply) {
-        console.log('[POLL] Failed to generate reply');
-        continue;
-      }
-
-      const posted = await postReply(tweet.id, reply);
-      if (posted) {
-        console.log('[POLL] Successfully posted reply:', posted);
-        replyCount++;
-        await addReply(tweet.author_id, tweet.id, reply);
-      } else {
-        console.log('[POLL] Failed to post reply');
-      }
-    }
-
     if (tweets.length > 0) {
+      console.log('[POLL] Processing ' + tweets.length + ' mentions');
+      mentionCount += tweets.length;
+      
+      for (const tweet of tweets) {
+        try {
+          const reply = await generateReply(tweet.text);
+          if (reply) {
+            const posted = await postReply(tweet.id, reply);
+            if (posted) {
+              console.log('[POLL] Posted reply to tweet ' + tweet.id);
+              replyCount++;
+            }
+          }
+        } catch (e) {
+          console.error('[POLL] Error processing tweet:', e.message);
+        }
+      }
+      
       lastProcessedTweetId = tweets[0].id;
-      console.log('[POLL] Updated lastProcessedTweetId:', lastProcessedTweetId);
     }
 
   } catch (error) {
