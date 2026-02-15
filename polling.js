@@ -315,8 +315,8 @@ CRITICAL: THE ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'unk
 Your reply MUST be related to that topic. Don't go off on tangents.
 
 THREAD CONTEXT:
-${threadOriginContext ? `- Original topic: "${threadOriginContext.originalTopic.substring(0, 80)}..."` : ''}
-- Your last reply: "${followUpContext.previousReply}"
+${threadOriginContext?.originalTopic ? `- Original topic: "${threadOriginContext.originalTopic.substring(0, 80)}..."` : ''}
+- Your last reply: "${followUpContext?.previousReply || ''}"
 - They're now asking: "${mentionText}"
 
 PROJECT/TICKER CONTEXT:
@@ -369,8 +369,8 @@ Generate ONLY the reply text.`;
           messages: [{
             role: 'user',
             content: followUpContext
-              ? `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general'}\nTHREAD: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\nLAST REPLY: "${followUpContext.previousReply}"\nFOLLOW-UP: "${mentionText}"\n\nTICKERS: ${tickerContext ? tickerContext.substring(0, 200) : 'None'}\n\nAnswer the follow-up WHILE STAYING ON TOPIC about ${threadOriginContext?.coreMessage || 'the original topic'}. Don't repeat. Make it relevant to what the post is actually about.`
-              : `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general discussion'}\nTHREAD: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general'}"\n\nCONVERSATION:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nTICKERS/PROJECTS:\n${tickerContext || contextKnowledge.projects?.map(p => `@${p.name}`).join(', ') || 'None'}\n\nQUESTION: ${mentionText}\n\nMake a reply that is RELATED to the original topic (${threadOriginContext?.coreMessage || 'the post'}). Don't go off on random tangents. If a ticker is mentioned, comment on it in context of the original topic.`
+              ? `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general'}\nTHREAD: "${threadOriginContext?.originalTopic?.substring(0, 80) || 'general'}"\nLAST REPLY: "${followUpContext.previousReply}"\nFOLLOW-UP: "${mentionText}"\n\nTICKERS: ${tickerContext?.substring(0, 200) || 'None'}\n\nAnswer the follow-up WHILE STAYING ON TOPIC about ${threadOriginContext?.coreMessage || 'the original topic'}. Don't repeat. Make it relevant to what the post is actually about.`
+              : `ORIGINAL POST IS ABOUT: ${threadOriginContext?.coreMessage || 'general discussion'}\nTHREAD: "${threadOriginContext?.originalTopic?.substring(0, 100) || 'general'}"\n\nCONVERSATION:\n${contextKnowledge.conversationSummary?.substring(0, 300) || ''}\n\nTICKERS/PROJECTS:\n${tickerContext || (contextKnowledge.projects && contextKnowledge.projects.length > 0 ? contextKnowledge.projects.map(p => `@${p.name}`).join(', ') : 'None')}\n\nQUESTION: ${mentionText}\n\nMake a reply that is RELATED to the original topic (${threadOriginContext?.coreMessage || 'the post'}). Don't go off on random tangents. If a ticker is mentioned, comment on it in context of the original topic.`
           }]
         });
         
