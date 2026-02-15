@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { TwitterApi } from 'twitter-api-v2';
+import { Anthropic } from '@anthropic-ai/sdk';
 
 dotenv.config();
 
@@ -19,12 +20,19 @@ const twitterClient = new TwitterApi({
 });
 
 const v2Client = twitterClient.v2;
+const rwClient = twitterClient.readWrite;
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
+let replyCount = 0;
 
 app.get('/stats', (req, res) => {
-  res.json({ mentions_received: mentionCount, uptime_seconds: process.uptime() });
+  res.json({ 
+    mentions_received: mentionCount, 
+    replies_sent: replyCount,
+    uptime_seconds: process.uptime() 
+  });
 });
 
 async function poll() {
@@ -36,9 +44,46 @@ async function poll() {
     });
     
     const mentions = response.data || [];
-    if (mentions.length > 0) {
-      mentionCount = mentions.length;
-      console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
+    if (mentions.length === 0) return;
+    
+    mentionCount = mentions.length;
+    console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
+    
+    // Reply to first 3 unreplied mentions
+    for (const mention of mentions.slice(0, 3)) {
+      try {
+        // Generate reply with Claude
+        const msg = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 100,
+          messages: [{
+            role: 'user',
+            content: `Tweet: "${mention.text.substring(0, 100)}"\n\nWrite a helpful, specific reply (max 240 chars):`
+          }]
+        });
+        
+        const replyText = msg.content[0].text.trim().substring(0, 280);
+        
+        // Post reply via v2.tweet
+        try {
+          const posted = await v2Client.post('tweets', {
+            text: replyText,
+            reply: {
+              in_reply_to_tweet_id: mention.id
+            }
+          });
+          
+          if (posted?.data?.id) {
+            replyCount++;
+            console.log(`[REPLY] ✓ Posted ${posted.data.id}`);
+          }
+        } catch (postErr) {
+          console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
+        }
+      } catch (e) {
+        console.error(`[REPLY-ERROR] ${e.message}`);
+        console.error(`[REPLY-ERROR-DETAIL] ${JSON.stringify(e).substring(0, 200)}`);
+      }
     }
   } catch (error) {
     console.error(`[ERROR] ${new Date().toISOString()} - ${error.message}`);
