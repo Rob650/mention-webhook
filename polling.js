@@ -384,25 +384,42 @@ Generate ONLY the reply text.`;
           replyText = '';
         }
         
-        // ALWAYS have a fallback - never reply with cop-outs
+        // ALWAYS have a fallback - analyze tickers for momentum/attention
         if (!replyText || replyText.length === 0) {
-          // Multi-level fallback based on context
-          const threadSummary = contextKnowledge.conversationSummary.toLowerCase();
-          const hasBots = threadSummary.includes('bot') || threadSummary.includes('agent') || threadSummary.includes('autonomous');
-          const hasTrading = threadSummary.includes('trade') || threadSummary.includes('execute') || threadSummary.includes('deploy');
-          const hasBuilding = threadSummary.includes('build') || threadSummary.includes('ship') || threadSummary.includes('launch');
+          // If we have ticker context, analyze the momentum
+          if (tickerContext && tickerContext.length > 0) {
+            // Extract ticker from context
+            const tickerMatch = tickerContext.match(/\$[A-Z]+/);
+            const ticker = tickerMatch ? tickerMatch[0] : null;
+            
+            if (ticker) {
+              // Analyze attention/momentum from research
+              const hasBullish = tickerContext.toLowerCase().includes('ship') || tickerContext.toLowerCase().includes('launch') || tickerContext.toLowerCase().includes('execution');
+              const hasGrowth = tickerContext.toLowerCase().includes('grow') || tickerContext.toLowerCase().includes('uptick') || tickerContext.toLowerCase().includes('trending');
+              
+              if (hasBullish) {
+                replyText = `${ticker} shipping real execution—attention follows builders, not hype. That's the pattern.`;
+              } else if (hasGrowth) {
+                replyText = `${ticker} attention curve is classic: early builders, then momentum awareness. Execution drives the narrative.`;
+              } else {
+                replyText = `${ticker} gaining traction because execution beats speculation. People see the signal.`;
+              }
+            }
+          }
           
-          if (hasBots) {
-            replyText = 'Autonomous systems shipping real execution—that\'s where the signal is.';
-          } else if (hasTrading || hasBuilding) {
-            replyText = 'Moving faster than the consensus. That\'s always been the play.';
-          } else if (contextKnowledge.projects && contextKnowledge.projects.length > 0) {
-            const names = contextKnowledge.projects.slice(0, 1).map(p => p.name);
-            replyText = `${names} executing on a timeline most people didn't see coming.`;
-          } else if (threadSummary.includes('question')) {
-            replyText = 'The answer\'s in the execution metrics. Look at the data.';
-          } else {
-            replyText = 'Building wins. Always.';
+          // If still no reply, use context-based fallback
+          if (!replyText || replyText.length === 0) {
+            const threadSummary = contextKnowledge.conversationSummary.toLowerCase();
+            const hasBots = threadSummary.includes('bot') || threadSummary.includes('agent');
+            const hasBuilding = threadSummary.includes('build') || threadSummary.includes('ship');
+            
+            if (hasBots) {
+              replyText = 'Autonomous systems are shipping—that\'s where the real signal lives.';
+            } else if (hasBuilding) {
+              replyText = 'Execution always wins the attention battle. Builders know.';
+            } else {
+              replyText = 'Attention flows to execution. Always has.';
+            }
           }
         }
         
