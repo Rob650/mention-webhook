@@ -44,7 +44,11 @@ async function poll() {
     const me = await v2Client.me();
     const query = `@${me.data.username} -is:retweet`;
 
-    const response = await v2Client.search(query);
+    // Use raw endpoint instead of .search() - .search() is broken
+    const response = await v2Client.get('tweets/search/recent', {
+      query: query,
+      max_results: 100
+    });
     const mentions = response.data || [];
 
     console.log(`[${new Date().toISOString()}] Found ${mentions.length} mentions`);
