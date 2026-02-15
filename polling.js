@@ -27,6 +27,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
+let lastMentionId = null; // Track the newest mention we've seen
 
 // Persistent tracking by AUTHOR_ID per CONVERSATION
 // Key format: "conversation_id:author_id" -> reply_count (max 3)
@@ -92,17 +93,31 @@ app.get('/stats', (req, res) => {
 async function poll() {
   try {
     const me = await v2Client.me();
-    const response = await v2Client.get('tweets/search/recent', {
+    // Only get NEW mentions (since the last one we've seen) to avoid processing old ones repeatedly
+    const searchParams = {
       query: `@${me.data.username} -is:retweet`,
       'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at,conversation_id,author_id',
       max_results: 100
-    });
+    };
+    
+    // Add since_id to only get mentions newer than the last one we processed
+    if (lastMentionId) {
+      searchParams.since_id = lastMentionId;
+    }
+    
+    const response = await v2Client.get('tweets/search/recent', searchParams);
     
     const mentions = response.data || [];
+    
+    // Update the lastMentionId to the newest mention we've seen (first in list)
+    if (mentions.length > 0) {
+      lastMentionId = mentions[0].id;
+    }
+    
     if (mentions.length === 0) return;
     
     mentionCount = mentions.length;
-    console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
+    console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} NEW mentions (since ${lastMentionId.substring(0, 8)}...)`);
     
     // Reply to each unique mention ONCE - one reply per 30-second cycle
     let repliedThisCycle = 0;
