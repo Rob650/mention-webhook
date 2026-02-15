@@ -98,8 +98,8 @@ async function poll() {
       }
       
       // Check if we've replied 3 times to this author in this conversation
-      const replyCount = replyTracking[trackingKey] || 0;
-      if (replyCount >= 3) {
+      const authorReplyCount = replyTracking[trackingKey] || 0;
+      if (authorReplyCount >= 3) {
         console.log(`[SKIP] Author ${authorId.substring(0, 8)}... has 3 replies in conversation (max reached)`);
         continue;
       }
@@ -182,11 +182,10 @@ Be GROK. Be sharp. Generate ONLY the reply text.`,
             replyCount++;
             repliedThisCycle++;
             // Track this author in this conversation
-            const trackingKey = `${convId}:${authorId}`;
             replyTracking[trackingKey] = (replyTracking[trackingKey] || 0) + 1;
-            const authorReplyCount = replyTracking[trackingKey];
+            const newReplyCount = replyTracking[trackingKey];
             saveReplyTracking(); // Persist the tracking
-            console.log(`[POSTED] ✓ Reply ${authorReplyCount}/3 to author ${authorId.substring(0, 8)}... in conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
+            console.log(`[POSTED] ✓ Reply ${newReplyCount}/3 to author ${authorId.substring(0, 8)}... in conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
