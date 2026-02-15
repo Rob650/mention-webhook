@@ -8,6 +8,7 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import fs, { mkdirSync } from 'fs';
 import { buildContextKnowledge } from './src/stages/stage2-full-research.js';
 import { loadConversationMemory, getConversationContext, saveReplyToMemory, isFollowUp, getFollowUpContext } from './src/stages/stage2-conversation-memory.js';
+import { findThreadOrigin, analyzeThreadEvolution, buildContextFromOrigin } from './src/stages/stage1-thread-origin.js';
 
 dotenv.config();
 
@@ -170,33 +171,40 @@ async function poll() {
         console.log(`\n[RESEARCH-START] Processing mention: "${mentionText.substring(0, 80)}..."`);
         
         let contextKnowledge = null;
+        let threadOriginContext = null;
+        
         try {
           const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
             'tweet.fields': 'conversation_id'
           });
           
-          // Get full conversation thread
+          // Get conversation ID
           if (tweetDetail.data?.conversation_id) {
             try {
-              const convTweets = await v2Client.get('tweets/search/recent', {
-                query: `conversation_id:${tweetDetail.data.conversation_id}`,
-                'tweet.fields': 'public_metrics,created_at',
-                'expansions': 'author_id',
-                'user.fields': 'username',
-                max_results: 20
-              });
+              // STAGE 1: Find thread origin (understand what this thread is ABOUT)
+              console.log(`[THREAD-ORIGIN] Finding root of conversation ${tweetDetail.data.conversation_id.substring(0, 8)}...`);
+              const threadData = await findThreadOrigin(tweetDetail.data.conversation_id);
               
-              if (convTweets.data && convTweets.data.length > 0) {
-                console.log(`[RESEARCH] Found ${convTweets.data.length} tweets in conversation`);
+              if (threadData) {
+                threadOriginContext = analyzeThreadEvolution(threadData);
+                console.log(`[THREAD-ORIGIN] ✓ Original topic: "${threadOriginContext.originalTopic.substring(0, 60)}..."`);
+                console.log(`[THREAD-ORIGIN] ✓ Thread length: ${threadOriginContext.threadLength} tweets`);
                 
-                // Build full context knowledge
-                contextKnowledge = await buildContextKnowledge(convTweets.data);
+                // Use the full thread data for context
+                const convTweets = threadData.allTweets;
                 
-                console.log(`[RESEARCH] Identified ${contextKnowledge.topics.length} topics`);
-                console.log(`[RESEARCH] Researched ${contextKnowledge.research.length} topics in depth`);
+                if (convTweets && convTweets.length > 0) {
+                  console.log(`[RESEARCH] Analyzing full thread (${convTweets.length} tweets total)`);
+                  
+                  // Build full context knowledge
+                  contextKnowledge = await buildContextKnowledge(convTweets);
+                  
+                  console.log(`[RESEARCH] Identified ${contextKnowledge.topics.length} topics`);
+                  console.log(`[RESEARCH] Researched ${contextKnowledge.research.length} topics in depth`);
+                }
               }
             } catch (e) {
-              console.log(`[RESEARCH-WARN] Failed to fetch full thread: ${e.message}`);
+              console.log(`[THREAD-ORIGIN-WARN] Failed to analyze thread: ${e.message}`);
             }
           }
         } catch (contextErr) {
@@ -235,49 +243,50 @@ async function poll() {
           console.log(`[FOLLOW-UP] New question: "${mentionText.substring(0, 50)}..."`);
         }
         
+        // Log thread origin context
+        if (threadOriginContext) {
+          console.log(`[CONTEXT] Thread started: "${threadOriginContext.originalTopic.substring(0, 60)}..."`);
+          console.log(`[CONTEXT] We're at position ${threadOriginContext.threadLength} in conversation`);
+        }
+        
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
         // Generate reply in GROK's style - ALWAYS make an attempt
-        // Special handling for follow-ups: evolve the conversation, don't repeat
+        // UNDERSTAND thread origin + current position
         const systemPrompt = followUpContext 
           ? `You are @graisonbot replying in a Twitter thread. This is a FOLLOW-UP to your previous reply.
-INSTRUCTION: They're asking a new question/challenge. Don't repeat your last answer. Evolve the conversation.
-
-CONTEXT:
-- Your last reply was: "${followUpContext.previousReply}"
+THREAD CONTEXT:
+${threadOriginContext ? `- Original topic: "${threadOriginContext.originalTopic.substring(0, 80)}..."` : ''}
+- Your last reply: "${followUpContext.previousReply}"
 - They're now asking: "${mentionText}"
+
+INSTRUCTION: Don't repeat yourself. Answer the NEW question. Build on your point.
 
 YOUR JOB:
 1. Address their NEW question directly
 2. Build on your previous point, don't repeat it
-3. Answer specifically (if they ask "which project", name one)
+3. Answer specifically
 4. Still witty, confident, sharp
 5. STATEMENT ONLY (no questions)
 6. Under 240 characters
 
-Example:
-- LAST: "Multi-stream beats single tokens"
-- FOLLOW-UP: "Which project though?"
-- REPLY: "Bittensor—subnets force genuine utility, not hype"
-
 Generate ONLY the reply text.`
           : `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-INSTRUCTION: You ALWAYS reply. Never silent. Keep it aligned with the thread discussion.
+
+THREAD ORIGIN (understand what we're talking about):
+${threadOriginContext ? `- Conversation started: "${threadOriginContext.originalTopic.substring(0, 100)}..."` : '- General discussion'}
+
+INSTRUCTION: Understand what this thread is about. Make a comment aligned with that topic.
 
 YOUR JOB:
-1. Address the topic being discussed in the thread
-2. Make an informed comment (use research if available)
-3. Be witty and confident
-4. STATEMENT ONLY - no questions, no hedging
-5. Align with what people are talking about
+1. Understand the original topic (above)
+2. Understand where the conversation has evolved to
+3. Make an informed comment that fits this context
+4. Be witty and confident
+5. STATEMENT ONLY - no questions, no hedging
 6. Under 240 characters
 
-CRITICAL RULES:
-- ALWAYS attempt a reply
-- Base on thread context
-- Use research findings when available
-- Confident tone (GROK style)
-- Pure statement (no "?", no hedging)
+CRITICAL: Stay aligned with the thread topic. Don't go off on tangents.
 
 Generate ONLY the reply text.`;
         
@@ -288,8 +297,8 @@ Generate ONLY the reply text.`;
           messages: [{
             role: 'user',
             content: followUpContext
-              ? `PREVIOUS CONTEXT:\nYour last reply: "${followUpContext.previousReply}"\nTheir follow-up: "${mentionText}"\nThread: ${contextKnowledge.conversationSummary.substring(0, 300)}\n\nAnswer their follow-up, don't repeat yourself.`
-              : `THREAD DISCUSSION:\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general discussion'}\n\nRESEARCH:\n${researchContextStr || '(thread context)'}\n\nUSER COMMENT:\n${mentionText}\n\nMake a confident statement.`
+              ? `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 80) || 'general'}"\n\nPREVIOUS CONTEXT:\nYour last reply: "${followUpContext.previousReply}"\nTheir follow-up: "${mentionText}"\n\nTHREAD SO FAR:\n${contextKnowledge.conversationSummary.substring(0, 300)}\n\nAnswer their follow-up. Don't repeat. Stay on topic.`
+              : `THREAD STARTED WITH: "${threadOriginContext?.originalTopic.substring(0, 100) || 'general discussion'}"\n\nCONVERSATION HISTORY:\n${contextKnowledge.conversationSummary.substring(0, 400)}\n\nPROJECTS/TOPICS:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general'}\n\nRESEARCH:\n${researchContextStr || '(see above)'}\n\nYOU'RE NOW BEING ASKED:\n${mentionText}\n\nReply aligned with the original topic and thread evolution.`
           }]
         });
         
