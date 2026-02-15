@@ -4,7 +4,7 @@
     "builder": "nixpacks"
   },
   "deploy": {
-    "startCommand": "node server-v2.js",
+    "startCommand": "node stream.js",
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 3
   }
