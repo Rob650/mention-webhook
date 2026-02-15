@@ -47,18 +47,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.get('/stats', async (req, res) => {
-  try {
-    const stats = await getStats();
-    res.json({
-      total_replies: stats.total_replies,
-      mentions_received: mentionCount,
-      replies_sent: replyCount,
-      uptime_seconds: process.uptime()
-    });
-  } catch (error) {
-    res.json({ error: error.message });
-  }
+app.get('/stats', (req, res) => {
+  res.json({
+    mentions_received: mentionCount,
+    replies_sent: replyCount,
+    uptime_seconds: process.uptime()
+  });
 });
 
 async function pollForMentions() {
