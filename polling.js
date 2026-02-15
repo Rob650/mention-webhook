@@ -1,11 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * POLLING-BASED MENTION HANDLER
- * Real-time polling for @graisonbot mentions
- * Works on free Twitter API tier (no elevated access needed)
- */
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -27,6 +21,7 @@ const twitterClient = new TwitterApi({
   accessSecret: process.env.TWITTER_ACCESS_TOKEN_SECRET,
 });
 
+const v1Client = twitterClient.v1;
 const rwClient = twitterClient.readWrite;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -71,7 +66,9 @@ app.get('/stats', async (req, res) => {
       estimated_monthly: `$${(dailyCost * 30).toFixed(2)}`,
       uptime_seconds: process.uptime(),
       polling_interval_seconds: 60,
-      last_processed_tweet_id: lastProcessedTweetId
+      last_processed_tweet_id: lastProcessedTweetId,
+      mentions_received: mentionCount,
+      replies_sent: replyCount
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -80,65 +77,61 @@ app.get('/stats', async (req, res) => {
 
 async function pollForMentions() {
   try {
-    logger.info('🔍 Polling for new mentions...');
+    logger.info('🔍 Polling mentions timeline...');
 
-    const query = '@graisonbot -is:retweet';
     const params = {
-      'tweet.fields': 'created_at,author_id,conversation_id',
-      'user.fields': 'username,name,verified',
-      'expansions': 'author_id',
-      max_results: 10
+      count: 10,
+      include_entities: true,
+      tweet_mode: 'extended'
     };
 
     if (lastProcessedTweetId) {
       params.since_id = lastProcessedTweetId;
     }
 
-    const response = await rwClient.v2.search(query, params);
+    const mentions = await v1Client.get('statuses/mentions_timeline', params);
 
-    if (!response.data || response.data.length === 0) {
+    if (!mentions || mentions.length === 0) {
       logger.info('✓ No new mentions');
       return;
     }
 
-    logger.info(`Found ${response.data.length} new mentions`);
+    logger.info(`Found ${mentions.length} new mentions`);
 
-    for (const tweet of response.data) {
-      const author = response.includes?.users?.find(u => u.id === tweet.author_id);
-
-      logger.mention(author.username, tweet.text, author.verified);
+    for (const tweet of mentions) {
+      logger.mention(tweet.user.screen_name, tweet.full_text, tweet.user.verified);
       mentionCount++;
 
-      if (!author.verified) {
-        logger.info(`Skipping unverified author: @${author.username}`);
+      if (!tweet.user.verified) {
+        logger.info(`Skipping unverified: @${tweet.user.screen_name}`);
         continue;
       }
 
-      if (await hasRecentReply(tweet.author_id)) {
-        logger.warn(`Already replied to @${author.username} recently`);
+      if (await hasRecentReply(tweet.user.id_str)) {
+        logger.warn(`Already replied to @${tweet.user.screen_name} recently`);
         continue;
       }
 
-      const reply = await generateReply(tweet.text);
+      const reply = await generateReply(tweet.full_text);
       if (!reply) {
         logger.error('Reply generation failed');
         continue;
       }
 
-      const posted = await postReply(tweet.id, reply);
+      const posted = await postReply(tweet.id_str, reply);
       if (posted) {
         replyCount++;
-        await addReply(tweet.author_id, tweet.id, reply);
+        await addReply(tweet.user.id_str, tweet.id_str, reply);
         logger.success('Reply posted', {
           tweet_id: posted,
-          author: author.username,
+          author: tweet.user.screen_name,
           cost: '$0.014'
         });
       }
     }
 
-    if (response.meta.newest_id) {
-      lastProcessedTweetId = response.meta.newest_id;
+    if (mentions.length > 0) {
+      lastProcessedTweetId = mentions[0].id_str;
       logger.info(`Updated last_processed_tweet_id: ${lastProcessedTweetId}`);
     }
 
@@ -181,17 +174,16 @@ async function postReply(replyToId, text) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`🚀 POLLING MENTION HANDLER`);
+  logger.info(`🚀 POLLING MENTION HANDLER (v1.1 API)`);
   logger.info(`Listening on port ${PORT}`);
-  logger.info('Configuration: Query=@graisonbot, Interval=60s, Filter=Verified');
-  logger.info('Cost: $0.004 Claude + $0.010 Twitter per reply');
+  logger.info('Using Twitter v1.1 mentions timeline (free tier compatible)');
   logger.info('');
 });
 
 await pollForMentions();
 setInterval(pollForMentions, 60000);
 
-logger.success('Polling started', { interval: '60 seconds' });
+logger.success('Polling started', { interval: '60 seconds', api: 'v1.1' });
 
 process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
