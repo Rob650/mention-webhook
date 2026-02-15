@@ -72,43 +72,76 @@ async function identifyTopics(conversationThread) {
 
 async function deepResearchTopic(topic, v2Client) {
   try {
-    // Use Twitter API to search for what's being said about this topic
-    const query = `${topic.name.replace('@', '')} -is:retweet`;
+    const topicName = topic.name.replace('@', '');
+    const research = [];
+    let sources = 0;
     
-    console.log(`[TWITTER-SEARCH] Researching ${topic.name}: "${query}"`);
-    
-    const searchRes = await v2Client.get('tweets/search/recent', {
-      query: query,
-      'tweet.fields': 'public_metrics,created_at,author_id',
-      max_results: 10
-    });
-    
-    if (!searchRes.data || searchRes.data.length === 0) {
-      console.log(`[TWITTER-SEARCH] No tweets found for ${topic.name}`);
-      return null;
+    // LAYER 1: Brave web search
+    try {
+      const braveKey = process.env.BRAVE_API_KEY;
+      if (braveKey) {
+        console.log(`[BRAVE-SEARCH] Researching ${topic.name}...`);
+        const braveUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(topicName + ' latest 2025')}&count=5`;
+        
+        const braveRes = await fetch(braveUrl, {
+          headers: {
+            'Accept': 'application/json',
+            'X-Subscription-Token': braveKey
+          }
+        });
+        
+        if (braveRes.ok) {
+          const braveData = await braveRes.json();
+          if (braveData.web && braveData.web.results) {
+            const braveResults = braveData.web.results.slice(0, 3);
+            braveResults.forEach((r, i) => {
+              research.push(`[BRAVE-${i + 1}] ${r.title}: ${r.description.substring(0, 100)}`);
+              sources++;
+            });
+            console.log(`[BRAVE-SEARCH] ✓ Got ${braveResults.length} web results`);
+          }
+        }
+      }
+    } catch (e) {
+      console.log(`[BRAVE-SEARCH] Error: ${e.message}`);
     }
     
-    // Extract insights from tweets about this topic
-    const tweets = searchRes.data.slice(0, 5);
-    const researchItems = tweets.map(t => ({
-      text: t.text.substring(0, 150),
-      engagement: t.public_metrics?.like_count || 0,
-      created_at: t.created_at
-    }));
+    // LAYER 2: Twitter API search
+    try {
+      console.log(`[TWITTER-SEARCH] Researching ${topic.name}...`);
+      const query = `${topicName} -is:retweet`;
+      
+      const searchRes = await v2Client.get('tweets/search/recent', {
+        query: query,
+        'tweet.fields': 'public_metrics,created_at',
+        max_results: 5
+      });
+      
+      if (searchRes.data && searchRes.data.length > 0) {
+        const tweets = searchRes.data.slice(0, 3);
+        tweets.forEach((t, i) => {
+          research.push(`[TWITTER-${i + 1}] ${t.text.substring(0, 100)} (${t.public_metrics?.like_count || 0} likes)`);
+          sources++;
+        });
+        console.log(`[TWITTER-SEARCH] ✓ Got ${tweets.length} tweets`);
+      }
+    } catch (e) {
+      console.log(`[TWITTER-SEARCH] Error: ${e.message}`);
+    }
     
-    const researchSummary = researchItems
-      .map((r, i) => `[${i + 1}] ${r.text} (${r.engagement} likes)`)
-      .join('\n\n');
+    if (research.length === 0) {
+      console.log(`[RESEARCH] No data found for ${topic.name}`);
+      return null;
+    }
     
     return {
       topic: topic.name,
       type: topic.type,
-      research: researchSummary,
-      items: researchItems,
-      sources: researchItems.length
+      research: research.join('\n\n'),
+      sources: sources
     };
   } catch (e) {
-    console.log(`[TWITTER-SEARCH] Failed for ${topic.name}: ${e.message}`);
+    console.log(`[RESEARCH] Failed for ${topic.name}: ${e.message}`);
     return null;
   }
 }
