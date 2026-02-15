@@ -28,32 +28,32 @@ const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
 
-// Persistent deduplication - load from file
-const REPLIED_FILE = '/tmp/replied-mentions.json';
-let repliedTo = new Set();
+// Persistent deduplication by CONVERSATION_ID (not mention ID)
+const REPLIED_FILE = '/tmp/replied-conversations.json';
+let repliedConversations = new Set();
 
-function loadRepliedMentions() {
+function loadRepliedConversations() {
   try {
     if (fs.existsSync(REPLIED_FILE)) {
       const data = JSON.parse(fs.readFileSync(REPLIED_FILE, 'utf8'));
-      repliedTo = new Set(data);
-      console.log(`[INIT] Loaded ${repliedTo.size} previously-replied mentions`);
+      repliedConversations = new Set(data);
+      console.log(`[INIT] Loaded ${repliedConversations.size} previously-replied conversations`);
     }
   } catch (e) {
-    console.error(`[INIT] Error loading replied mentions: ${e.message}`);
+    console.error(`[INIT] Error loading replied conversations: ${e.message}`);
   }
 }
 
-function saveRepliedMentions() {
+function saveRepliedConversations() {
   try {
-    fs.writeFileSync(REPLIED_FILE, JSON.stringify(Array.from(repliedTo)), 'utf8');
+    fs.writeFileSync(REPLIED_FILE, JSON.stringify(Array.from(repliedConversations)), 'utf8');
   } catch (e) {
-    console.error(`[SAVE] Error saving replied mentions: ${e.message}`);
+    console.error(`[SAVE] Error saving replied conversations: ${e.message}`);
   }
 }
 
 // Load on startup
-loadRepliedMentions();
+loadRepliedConversations();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -68,7 +68,7 @@ async function poll() {
     const me = await v2Client.me();
     const response = await v2Client.get('tweets/search/recent', {
       query: `@${me.data.username} -is:retweet`,
-      'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at',
+      'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at,conversation_id',
       max_results: 100
     });
     
@@ -78,13 +78,29 @@ async function poll() {
     mentionCount = mentions.length;
     console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
     
-    // Reply to first 3 unreplied mentions
-    for (const mention of mentions.slice(0, 3)) {
-      // Skip if we already replied to this mention
-      if (repliedTo.has(mention.id)) {
-        console.log(`[SKIP] Already replied to ${mention.id}`);
+    // Reply to first 1 mention from each UNIQUE conversation (max 3 conversations per cycle)
+    const seenConversations = new Set();
+    let repliedThisCycle = 0;
+    const maxRepliesPerCycle = 3;
+    
+    for (const mention of mentions) {
+      if (repliedThisCycle >= maxRepliesPerCycle) break;
+      
+      const convId = mention.conversation_id || mention.id;
+      
+      // Skip if we've already replied in this conversation in THIS cycle
+      if (seenConversations.has(convId)) {
+        console.log(`[SKIP-CONV] Already handled conversation ${convId.substring(0, 8)}...`);
         continue;
       }
+      
+      // Skip if we've already replied in this conversation ever
+      if (repliedConversations.has(convId)) {
+        console.log(`[SKIP-HIST] Already replied in conversation ${convId.substring(0, 8)}...`);
+        continue;
+      }
+      
+      seenConversations.add(convId);
       
       try {
         // Generate context-aware reply with Claude
@@ -120,9 +136,11 @@ Always acknowledge what they said first, then provide value.`,
           
           if (posted?.data?.id) {
             replyCount++;
-            repliedTo.add(mention.id); // Mark as replied to
-            saveRepliedMentions(); // Persist the list
-            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}... (saved)`);
+            repliedThisCycle++;
+            const convId = mention.conversation_id || mention.id;
+            repliedConversations.add(convId); // Mark conversation as replied to
+            saveRepliedConversations(); // Persist the list
+            console.log(`[REPLY] ✓ Posted to conversation ${convId.substring(0, 8)}... (saved)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
