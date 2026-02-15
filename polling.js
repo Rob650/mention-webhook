@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { TwitterApi } from 'twitter-api-v2';
 import { Anthropic } from '@anthropic-ai/sdk';
 import fs, { mkdirSync } from 'fs';
+import { buildContextKnowledge } from './src/stages/stage2-full-research.js';
 
 dotenv.config();
 
@@ -161,103 +162,92 @@ async function poll() {
       mentionsSeen.add(mentionId);
       
       try {
-        // Fetch the thread context to get REAL facts
-        let threadContext = '';
-        let researchContext = '';
+        const mentionText = mention.text || '';
         
+        // FULL RESEARCH PIPELINE
+        console.log(`\n[RESEARCH-START] Processing mention: "${mentionText.substring(0, 80)}..."`);
+        
+        let contextKnowledge = null;
         try {
           const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
             'tweet.fields': 'conversation_id'
           });
           
-          // If this is a reply, get the full conversation thread
+          // Get full conversation thread
           if (tweetDetail.data?.conversation_id) {
             try {
               const convTweets = await v2Client.get('tweets/search/recent', {
                 query: `conversation_id:${tweetDetail.data.conversation_id}`,
                 'tweet.fields': 'public_metrics,created_at',
-                max_results: 10
+                'expansions': 'author_id',
+                'user.fields': 'username',
+                max_results: 20
               });
               
               if (convTweets.data && convTweets.data.length > 0) {
-                // Get full thread context (all tweets in conversation) - up to 5 tweets
-                threadContext = convTweets.data
-                  .slice(0, 5)
-                  .map(t => t.text)
-                  .join('\n\n---\n\n');
+                console.log(`[RESEARCH] Found ${convTweets.data.length} tweets in conversation`);
+                
+                // Build full context knowledge
+                contextKnowledge = await buildContextKnowledge(convTweets.data);
+                
+                console.log(`[RESEARCH] Identified ${contextKnowledge.topics.length} topics`);
+                console.log(`[RESEARCH] Researched ${contextKnowledge.research.length} topics in depth`);
               }
             } catch (e) {
-              // Silent fail - proceed without context
+              console.log(`[RESEARCH-WARN] Failed to fetch full thread: ${e.message}`);
             }
           }
         } catch (contextErr) {
-          // Silent fail - proceed without context
+          console.log(`[RESEARCH-WARN] Failed to get conversation ID: ${contextErr.message}`);
         }
         
-        const mentionText = mention.text || '';
-        
-        // If thread context is thin, run research on the topic
-        if (!threadContext || threadContext.length < 100) {
-          try {
-            const topicKeywords = mentionText.split(' ').slice(0, 5).join(' ');
-            
-            // Run Brave search for topic research
-            const researchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(topicKeywords)}&count=5`;
-            const braveRes = await fetch(researchUrl, {
-              headers: { 'Accept': 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY || '' }
-            });
-            
-            if (braveRes.ok) {
-              const braveData = await braveRes.json();
-              if (braveData.web && braveData.web.results) {
-                researchContext = braveData.web.results
-                  .slice(0, 3)
-                  .map(r => `${r.title}: ${r.description}`)
-                  .join('\n');
-              }
-            }
-          } catch (e) {
-            // Silent fail - proceed without research
-          }
+        // Fallback if no research happened
+        if (!contextKnowledge) {
+          contextKnowledge = {
+            conversationSummary: mentionText,
+            topics: [],
+            research: [],
+            threadLength: 1
+          };
         }
         
-        // LOG THREAD CONTEXT FOR VERIFICATION
-        console.log(`[CONTEXT-DEBUG] Tweet: "${mentionText.substring(0, 100)}..."`);
-        console.log(`[CONTEXT-DEBUG] Thread context length: ${threadContext.length} chars`);
-        if (threadContext.length > 0) {
-          console.log(`[CONTEXT-DEBUG] Thread: ${threadContext.substring(0, 150)}...`);
-        }
-        if (researchContext.length > 0) {
-          console.log(`[CONTEXT-DEBUG] Research: ${researchContext.substring(0, 150)}...`);
+        console.log(`[RESEARCH-COMPLETE] Ready to compose reply with full context`);
+        
+        // Build research context string for AI
+        let researchContextStr = '';
+        if (contextKnowledge.research && contextKnowledge.research.length > 0) {
+          researchContextStr = contextKnowledge.research
+            .map(r => `TOPIC: ${r.topic} (${r.type})\nRESEARCH:\n${r.research}`)
+            .join('\n\n---\n\n');
         }
         
-        // Generate reply in GROK's style - witty tone + actual facts ONLY
+        // Generate reply in GROK's style - backed by FULL research
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-CRITICAL: ZERO fabrication. ONLY facts explicitly in the thread context.
+INSTRUCTION: You've done FULL RESEARCH on this thread. You understand the topics, the context, and what's being discussed.
 
-IRON RULES:
-1. ONLY use facts explicitly in thread context provided
-2. If claiming a company/product did something, it MUST be in the thread
-3. NO invented statistics, metrics, or product claims
-4. If thread is weak on facts, reference what IS there generically
-5. NO hedging ("could", "might", "maybe")
-6. Sharp sarcasm, confident directness
-7. Under 240 characters
+YOUR JOB:
+1. Use the research & conversation context provided
+2. Reference specific facts from research/thread
+3. Make a sharp, informed reply that shows you understand
+4. Witty + substantive (not just sarcasm)
+5. Under 240 characters
 
-VERIFICATION:
-- Can I point to where this fact appears in the thread? YES = use it
-- Is this something I'm inferring/imagining? NO = don't use it
+RULES:
+- Point to what was actually said/researched
+- NO invented claims
+- Confident tone backed by actual knowledge
+- One killer insight
 
-Example ✅: "Thread mentions X shipped Y—that's execution vs theory talk"
-Example ❌: "X keeps shipping real markets" (unless explicitly in thread)
+Example ✅: "Solana agents avg 23% better latency—while everyone else still building."
+Example ❌: Generic statement with no evidence
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `THREAD CONTEXT:\n${threadContext || 'EMPTY'}\n\nRESEARCH:\n${researchContext || 'NONE'}\n\nMENTION:\n${mentionText}\n\nReply using ONLY facts you can point to in the context above.`
+            content: `CONVERSATION THREAD:\n${contextKnowledge.conversationSummary}\n\nTOPICS DISCUSSED:\n${contextKnowledge.topics.map(t => `- ${t.name} (${t.type}, ${t.mentions} mentions)`).join('\n')}\n\nRESEARCH FINDINGS:\n${researchContextStr || 'No deep research performed'}\n\nYOUR REPLY TO:\n${mentionText}\n\nCompose a smart reply backed by this research.`
           }]
         });
         
