@@ -228,48 +228,61 @@ async function poll() {
         const projectsWithData = contextKnowledge.research.filter(r => r.sources > 0).length;
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
-        // Generate reply in GROK's style - informed by research, not constrained by it
+        // Generate reply in GROK's style - ALWAYS make an attempt
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-INSTRUCTION: You have research on these projects. Use what you found, extrapolate reasonably, and reply with confidence.
+INSTRUCTION: You ALWAYS reply. Never silent. Keep it aligned with the thread discussion.
 
 YOUR JOB:
-1. Reference the projects mentioned with context from research/thread
-2. Make informed observations based on what you know
-3. Be witty and confident - don't hedge
-4. Reasonable extrapolation is OK (don't be silent)
-5. Under 240 characters
+1. Address the topic being discussed in the thread
+2. Make an informed comment (use research if available)
+3. Be witty and confident
+4. STATEMENT ONLY - no questions, no hedging
+5. Align with what people are talking about
+6. Under 240 characters
 
-RULES:
-- Use any data you found as foundation
-- Make reasonable inferences from that foundation
-- Don't fabricate entire claims with zero basis
-- But: "Project X is shipping feature Y" is fine if X is a known builder
-- Confident tone - GROK doesn't apologize for not having data
-- Compare projects when multiple mentioned
+CRITICAL RULES:
+- ALWAYS attempt a reply (never say you can't respond)
+- Base on thread context (don't go off-topic)
+- Use research findings when available
+- Make smart inferences from what's there
+- Confident tone (GROK style)
+- Pure statement (no "?", no "I'd need to know", no hedging)
 
-Philosophy: Smart bets based on context > silence
+If unsure about specifics: Make a thematic point aligned with the discussion.
 
-Example ✅: "Limitless shipping agents, bankrbot doing on-chain—clear winner is execution speed."
-Example ALSO OK: "Building in crypto always ships harder than theorizing—X is proving it."
+Example: "Token communities ship faster than committees" (thematic, aligned, confident)
+Example: "Solana agents executing vs Ethereum theorizing—timeline shows it"
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `THREAD (${contextKnowledge.threadLength} tweets):\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED (${contextKnowledge.projects.length}):\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'None identified'}\n\nRESEARCH:\n${researchContextStr || 'Use thread context to infer'}\n\nQUESTION:\n${mentionText}\n\nReply with confidence based on what you know about these projects.`
+            content: `THREAD DISCUSSION:\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED:\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'general crypto/AI discussion'}\n\nRESEARCH CONTEXT:\n${researchContextStr || '(using thread context)'}\n\nUSER COMMENT:\n${mentionText}\n\nMake a confident statement aligned with this discussion.`
           }]
         });
         
         let replyText = msg.content[0].text.trim();
         
+        // ALWAYS have a fallback - never reply with nothing
         if (!replyText || replyText.length === 0) {
-          // Fallback if AI returns empty
-          const projectNames = contextKnowledge.projects && contextKnowledge.projects.length > 0 
-            ? contextKnowledge.projects.slice(0, 2).map(p => `@${p.name}`).join(' vs ')
-            : 'builders';
-          replyText = `Execution beats theories every time—${projectNames} proving it.`;
+          // Multi-level fallback
+          if (contextKnowledge.projects && contextKnowledge.projects.length > 0) {
+            const names = contextKnowledge.projects.slice(0, 2).map(p => `@${p.name}`).join(' vs ');
+            replyText = `${names}—execution always wins the debate.`;
+          } else if (contextKnowledge.conversationSummary.length > 0) {
+            // Extract theme from conversation
+            if (contextKnowledge.conversationSummary.toLowerCase().includes('agent')) {
+              replyText = 'Agents shipping > agents theorizing. Clear pattern.';
+            } else if (contextKnowledge.conversationSummary.toLowerCase().includes('token')) {
+              replyText = 'Token incentives actually work when builders execute on them.';
+            } else {
+              replyText = 'Building beats talking every single time. Prove me wrong.';
+            }
+          } else {
+            replyText = 'Execution wins. Always.';
+          }
         }
         
         // Ensure we don't cut off mid-sentence - intelligently truncate at word boundary
@@ -279,26 +292,25 @@ Generate ONLY the reply text.`,
           const lastSpace = truncated.lastIndexOf(' ');
           if (lastSpace > 200) { // Only truncate at space if we're losing less than 40 chars
             replyText = truncated.substring(0, lastSpace);
-            // Remove trailing punctuation that might be incomplete
-            replyText = replyText.replace(/[\.,;:]*$/, '');
+            // Add ellipsis if truncated mid-thought
+            if (!replyText.endsWith('.') && !replyText.endsWith('!')) {
+              replyText += '.';
+            }
           } else {
-            replyText = truncated.substring(0, 240);
+            replyText = truncated.substring(0, 237) + '...';
           }
         }
         
-        // STRICT FILTER: Reject any reply that asks a question or requests clarification
-        // This ensures replies are direct statements with understanding, not questions
-        const badPatterns = ['?', "i'd need", 'need more', 'what do', 'could you', 'can you share', 'to be clear', 'just to clarify'];
-        const isQuestion = badPatterns.some(pattern => replyText.toLowerCase().includes(pattern));
+        // Final validation: ensure it's a statement (no trailing questions)
+        if (replyText.includes('?')) {
+          replyText = replyText.replace(/\?$/g, '.').replace(/\s+\?$/g, '.');
+        }
         
         console.log(`[MENTION] "${mention.text.substring(0, 50)}..."`);
         console.log(`[REPLY] "${replyText.substring(0, 70)}..."`);
         
-        // REJECT if it contains any question or clarification request
-        if (isQuestion) {
-          console.log(`[FILTER] Rejected (contains question/clarification request)`);
-          continue;
-        }
+        // Ensure no question marks remain (convert to statements)
+        replyText = replyText.replace(/\?/g, '.');
         
         // Post reply via v2.tweet
         try {
