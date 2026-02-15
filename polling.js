@@ -225,40 +225,52 @@ async function poll() {
         }
         
         // Log what we're about to pass to AI
-        console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched`);
+        const projectsWithData = contextKnowledge.research.filter(r => r.sources > 0).length;
+        console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
         
-        // Generate reply in GROK's style - backed by FULL research on ALL projects
+        // Generate reply in GROK's style - informed by research, not constrained by it
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-INSTRUCTION: Multiple projects were mentioned and researched. Compare/contrast them using the research data.
+INSTRUCTION: You have research on these projects. Use what you found, extrapolate reasonably, and reply with confidence.
 
 YOUR JOB:
-1. Reference MULTIPLE projects with specific facts from research
-2. Show you understand the differences between them
-3. Use real data (metrics, features, recent updates)
-4. Sharp wit backed by multi-project knowledge
+1. Reference the projects mentioned with context from research/thread
+2. Make informed observations based on what you know
+3. Be witty and confident - don't hedge
+4. Reasonable extrapolation is OK (don't be silent)
 5. Under 240 characters
 
-CRITICAL RULES:
-- Compare/contrast different projects when multiple exist
-- Point to specific research findings
-- NO invented claims or metrics
-- Confident tone backed by actual research
-- Show depth of understanding
+RULES:
+- Use any data you found as foundation
+- Make reasonable inferences from that foundation
+- Don't fabricate entire claims with zero basis
+- But: "Project X is shipping feature Y" is fine if X is a known builder
+- Confident tone - GROK doesn't apologize for not having data
+- Compare projects when multiple mentioned
 
-Example ✅: "Limitless shipped X feature, bankrbot doing Y—key difference is Z metrics."
-Example ❌: "Projects are all shipping" (vague, no data)
+Philosophy: Smart bets based on context > silence
+
+Example ✅: "Limitless shipping agents, bankrbot doing on-chain—clear winner is execution speed."
+Example ALSO OK: "Building in crypto always ships harder than theorizing—X is proving it."
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `THREAD (${contextKnowledge.threadLength} tweets):\n${contextKnowledge.conversationSummary}\n\nPROJECTS RESEARCHED (${contextKnowledge.research.length}):\n${researchContextStr || 'None researched'}\n\nQUESTION:\n${mentionText}\n\nReply comparing these projects with specific data from your research.`
+            content: `THREAD (${contextKnowledge.threadLength} tweets):\n${contextKnowledge.conversationSummary}\n\nPROJECTS MENTIONED (${contextKnowledge.projects.length}):\n${contextKnowledge.projects.map(p => `@${p.name}`).join(', ') || 'None identified'}\n\nRESEARCH:\n${researchContextStr || 'Use thread context to infer'}\n\nQUESTION:\n${mentionText}\n\nReply with confidence based on what you know about these projects.`
           }]
         });
         
         let replyText = msg.content[0].text.trim();
+        
+        if (!replyText || replyText.length === 0) {
+          // Fallback if AI returns empty
+          const projectNames = contextKnowledge.projects && contextKnowledge.projects.length > 0 
+            ? contextKnowledge.projects.slice(0, 2).map(p => `@${p.name}`).join(' vs ')
+            : 'builders';
+          replyText = `Execution beats theories every time—${projectNames} proving it.`;
+        }
         
         // Ensure we don't cut off mid-sentence - intelligently truncate at word boundary
         if (replyText.length > 240) {

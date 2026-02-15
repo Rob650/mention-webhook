@@ -75,33 +75,45 @@ async function deepResearchTopic(topic) {
     // For projects (@mentions), search specifically for recent updates/news
     let query = topic.name;
     if (topic.type === 'project') {
-      query = `${topic.name} latest updates 2025 OR ${topic.name} shipping OR ${topic.name} announcement`;
+      query = `${topic.name} latest updates 2025 ${topic.name} shipping ${topic.name} announcement`;
     }
     
-    const searchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=10&freshness=pw`;
+    const searchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5&freshness=pw`;
+    const braveKey = process.env.BRAVE_API_KEY;
+    
+    if (!braveKey) {
+      console.log(`[BRAVE] No API key configured`);
+      return null;
+    }
+    
     const res = await fetch(searchUrl, {
       headers: {
         'Accept': 'application/json',
-        'X-Subscription-Token': process.env.BRAVE_API_KEY || ''
+        'X-Subscription-Token': braveKey
       }
     });
     
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log(`[BRAVE] Search failed for ${topic.name}: HTTP ${res.status}`);
+      return null;
+    }
     
     const data = await res.json();
-    if (!data.web || !data.web.results) return null;
+    if (!data.web || !data.web.results || data.web.results.length === 0) {
+      console.log(`[BRAVE] No results for ${topic.name}`);
+      return null;
+    }
     
     // Extract useful information - prioritize recent news
     const results = data.web.results.slice(0, 5);
     const researchItems = results.map(r => ({
       title: r.title,
       snippet: r.description,
-      url: r.url,
-      timestamp: r.page_age
+      url: r.url
     }));
     
     const researchSummary = researchItems
-      .map(r => `[${r.title}] ${r.snippet}`)
+      .map(r => `${r.title}: ${r.snippet}`)
       .join('\n\n');
     
     return {
@@ -112,7 +124,7 @@ async function deepResearchTopic(topic) {
       sources: results.length
     };
   } catch (e) {
-    console.error(`[ERROR] Failed to research ${topic.name}: ${e.message}`);
+    console.error(`[ERROR] Research failed for ${topic.name}: ${e.message}`);
     return null;
   }
 }
@@ -130,32 +142,60 @@ async function buildContextKnowledge(conversationThread) {
   
   console.log(`[RESEARCH] Found ${projects.length} projects to research`);
   
-  // Research all projects (critical for multi-project comparison)
-  const research = [];
-  const projectsToResearch = projects.length > 0 ? projects : topics;
-  
-  for (const topic of projectsToResearch.slice(0, 8)) {
-    console.log(`[RESEARCH] Researching: ${topic.name} (${topic.type})`);
-    const result = await deepResearchTopic(topic);
-    if (result) {
-      research.push(result);
-      console.log(`[RESEARCH] ✓ Got ${result.sources} sources on ${topic.name}`);
-    }
-    // Rate limit
-    await new Promise(r => setTimeout(r, 500));
-  }
-  
   // Build summary of conversation
   const conversationSummary = conversationThread
     .map(t => `- ${t.text}`)
     .join('\n');
+  
+  // Research all projects (critical for multi-project comparison)
+  const research = [];
+  const projectsToResearch = projects.length > 0 ? projects : topics;
+  
+  if (process.env.BRAVE_API_KEY) {
+    // If Brave API is configured, do web research
+    for (const topic of projectsToResearch.slice(0, 8)) {
+      console.log(`[RESEARCH] Researching: ${topic.name} (${topic.type})`);
+      const result = await deepResearchTopic(topic);
+      if (result) {
+        research.push(result);
+        console.log(`[RESEARCH] ✓ Got ${result.sources} sources on ${topic.name}`);
+      }
+      // Rate limit
+      await new Promise(r => setTimeout(r, 500));
+    }
+  } else {
+    // Without Brave API, extract data from conversation thread about each project
+    console.log(`[RESEARCH] No Brave API key - using thread context for analysis`);
+    for (const project of projectsToResearch.slice(0, 8)) {
+      // Find what the thread says about this project
+      const projectMentions = conversationThread.filter(t => 
+        t.text.toLowerCase().includes(project.name.toLowerCase())
+      );
+      
+      if (projectMentions.length > 0) {
+        const threadData = projectMentions
+          .map(t => t.text)
+          .join('\n');
+        
+        research.push({
+          topic: project.name,
+          type: project.type,
+          research: threadData,
+          sources: projectMentions.length,
+          fromThread: true
+        });
+        console.log(`[RESEARCH] ✓ Found ${projectMentions.length} mentions of ${project.name} in thread`);
+      }
+    }
+  }
   
   return {
     conversationSummary,
     topics,
     projects,
     research,
-    threadLength: conversationThread.length
+    threadLength: conversationThread.length,
+    usedBraveApi: !!process.env.BRAVE_API_KEY
   };
 }
 
