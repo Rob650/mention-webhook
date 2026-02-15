@@ -154,32 +154,35 @@ async function poll() {
       mentionsSeen.add(mentionId);
       
       try {
-        // Fetch the thread context to get facts to cite
+        // Fetch the thread context to get REAL facts
         let threadContext = '';
         try {
           const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
             'tweet.fields': 'conversation_id'
           });
           
-          // If this is a reply, try to get the original tweet context
+          // If this is a reply, get the full conversation thread
           if (tweetDetail.data?.conversation_id) {
             try {
               const convTweets = await v2Client.get('tweets/search/recent', {
                 query: `conversation_id:${tweetDetail.data.conversation_id}`,
-                'tweet.fields': 'public_metrics',
-                max_results: 5
+                'tweet.fields': 'public_metrics,created_at',
+                max_results: 10
               });
               
               if (convTweets.data && convTweets.data.length > 0) {
-                // Get the context - last tweet in conversation (original post)
-                threadContext = convTweets.data[convTweets.data.length - 1].text || '';
+                // Get full thread context (all tweets in conversation) - up to 5 tweets
+                threadContext = convTweets.data
+                  .slice(0, 5)
+                  .map(t => t.text)
+                  .join('\n\n---\n\n');
               }
             } catch (e) {
-              // Silent fail
+              // Silent fail - proceed without context
             }
           }
         } catch (contextErr) {
-          // Silent fail
+          // Silent fail - proceed without context
         }
         
         const mentionText = mention.text || '';
@@ -189,28 +192,30 @@ async function poll() {
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-CRITICAL: Answer the question with a SPECIFIC FACT while maintaining sarcastic tone.
+CRITICAL: ONLY USE REAL FACTS from the thread. NO fabrication.
+
+RULES (STRICT):
+1. USE ONLY facts from the thread/conversation (numbers, names, details actually mentioned)
+2. If no specific facts available, make a sharp statement based on what IS in the thread
+3. NEVER invent statistics, dates, or product claims not in the thread
+4. NO hedging language ("could", "might", "maybe")
+5. Sharp sarcasm + substance (answer the actual question)
+6. Under 240 characters
+7. Statements only - bold claims
 
 STYLE:
-- Open with sharp sarcasm/wit
-- Then cite a specific fact/detail (make plausible ones if needed)
-- Confident, not hedging
-- Sharp directness, no fluff
-- One killer insight per reply
+- Lead with wit
+- Back with REAL facts from thread only
+- Confident directness
+- One insight
 
-REQUIREMENTS:
-1. INCLUDE a specific fact or detail (not vague)
-2. NO questions whatsoever
-3. Statements only - bold claims
-4. Under 240 characters
-5. Sarcasm + substance
-
-Example: "The shipping wins. Their Q1 latency dropped 23% with sparse attention—everyone else is still debating architectures."
+Example Good: "Q1 latency dropped 23%—everyone debating architecture." (if in thread)
+Example Bad: "Hit 92% uptime..." (if not in thread)
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `Thread context: "${threadContext || 'AI/research discussion'}"\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND a specific fact:`
+            content: `Thread context: "${threadContext || 'No thread context available'}"\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND a real fact (from thread only):`
           }]
         });
         
