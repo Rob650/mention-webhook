@@ -21,7 +21,7 @@ const twitterClient = new TwitterApi({
   accessSecret: process.env.TWITTER_ACCESS_TOKEN_SECRET,
 });
 
-const v1Client = twitterClient.v1;
+const v2Client = twitterClient.v2;
 const rwClient = twitterClient.readWrite;
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -77,61 +77,67 @@ app.get('/stats', async (req, res) => {
 
 async function pollForMentions() {
   try {
-    logger.info('🔍 Polling mentions timeline...');
+    logger.info('🔍 Polling for mentions...');
 
+    const query = '@graisonbot -is:retweet';
     const params = {
-      count: 10,
-      include_entities: true,
-      tweet_mode: 'extended'
+      'tweet.fields': 'created_at,author_id,conversation_id',
+      'user.fields': 'username,name,verified',
+      'expansions': 'author_id',
+      max_results: 10
     };
 
     if (lastProcessedTweetId) {
       params.since_id = lastProcessedTweetId;
     }
 
-    const mentions = await v1Client.get('statuses/mentions_timeline', params);
+    const response = await v2Client.search(query, params);
 
-    if (!mentions || mentions.length === 0) {
+    if (!response.data || response.data.length === 0) {
       logger.info('✓ No new mentions');
       return;
     }
 
-    logger.info(`Found ${mentions.length} new mentions`);
+    logger.info(`Found ${response.data.length} new mentions`);
 
-    for (const tweet of mentions) {
-      logger.mention(tweet.user.screen_name, tweet.full_text, tweet.user.verified);
+    for (const tweet of response.data) {
+      const author = response.includes?.users?.find(u => u.id === tweet.author_id);
+
+      if (!author) continue;
+
+      logger.mention(author.username, tweet.text, author.verified);
       mentionCount++;
 
-      if (!tweet.user.verified) {
-        logger.info(`Skipping unverified: @${tweet.user.screen_name}`);
+      if (!author.verified) {
+        logger.info(`Skipping unverified: @${author.username}`);
         continue;
       }
 
-      if (await hasRecentReply(tweet.user.id_str)) {
-        logger.warn(`Already replied to @${tweet.user.screen_name} recently`);
+      if (await hasRecentReply(tweet.author_id)) {
+        logger.warn(`Already replied to @${author.username} recently`);
         continue;
       }
 
-      const reply = await generateReply(tweet.full_text);
+      const reply = await generateReply(tweet.text);
       if (!reply) {
         logger.error('Reply generation failed');
         continue;
       }
 
-      const posted = await postReply(tweet.id_str, reply);
+      const posted = await postReply(tweet.id, reply);
       if (posted) {
         replyCount++;
-        await addReply(tweet.user.id_str, tweet.id_str, reply);
+        await addReply(tweet.author_id, tweet.id, reply);
         logger.success('Reply posted', {
           tweet_id: posted,
-          author: tweet.user.screen_name,
+          author: author.username,
           cost: '$0.014'
         });
       }
     }
 
-    if (mentions.length > 0) {
-      lastProcessedTweetId = mentions[0].id_str;
+    if (response.meta.newest_id) {
+      lastProcessedTweetId = response.meta.newest_id;
       logger.info(`Updated last_processed_tweet_id: ${lastProcessedTweetId}`);
     }
 
@@ -174,16 +180,16 @@ async function postReply(replyToId, text) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`🚀 POLLING MENTION HANDLER (v1.1 API)`);
+  logger.info(`🚀 POLLING MENTION HANDLER`);
   logger.info(`Listening on port ${PORT}`);
-  logger.info('Using Twitter v1.1 mentions timeline (free tier compatible)');
+  logger.info('Using Twitter v2 search API');
   logger.info('');
 });
 
 await pollForMentions();
 setInterval(pollForMentions, 60000);
 
-logger.success('Polling started', { interval: '60 seconds', api: 'v1.1' });
+logger.success('Polling started', { interval: '60 seconds' });
 
 process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
