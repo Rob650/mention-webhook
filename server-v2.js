@@ -276,7 +276,7 @@ function generateCRCToken(crcToken) {
 /**
  * Start server
  */
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🚀 GRAISONBOT WEBHOOK SERVER v2`);
   logger.info(`Listening on port ${PORT}`);
   logger.info(`Webhook URL: ${process.env.WEBHOOK_URL || 'https://your-domain.com/webhooks/twitter'}`);
