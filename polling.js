@@ -384,41 +384,49 @@ Generate ONLY the reply text.`;
           replyText = '';
         }
         
-        // ALWAYS have a fallback - analyze tickers for momentum/attention
+        // ALWAYS have a fallback - GROK TONE: sharp, witty, confident
         if (!replyText || replyText.length === 0) {
-          // If we have ticker context, analyze the momentum
+          // If we have ticker context, analyze with GROK attitude
           if (tickerContext && tickerContext.length > 0) {
             // Extract ticker from context
             const tickerMatch = tickerContext.match(/\$[A-Z]+/);
             const ticker = tickerMatch ? tickerMatch[0] : null;
             
             if (ticker) {
-              // Analyze attention/momentum from research
+              // Analyze attention/momentum from research - with GROK tone
               const hasBullish = tickerContext.toLowerCase().includes('ship') || tickerContext.toLowerCase().includes('launch') || tickerContext.toLowerCase().includes('execution');
               const hasGrowth = tickerContext.toLowerCase().includes('grow') || tickerContext.toLowerCase().includes('uptick') || tickerContext.toLowerCase().includes('trending');
+              const hasAI = tickerContext.toLowerCase().includes('ai') || tickerContext.toLowerCase().includes('agent');
               
-              if (hasBullish) {
-                replyText = `${ticker} shipping real execution—attention follows builders, not hype. That's the pattern.`;
+              if (hasBullish && hasAI) {
+                replyText = `${ticker} shipping AI execution—signal gets louder when builders stop talking and ship.`;
+              } else if (hasBullish) {
+                replyText = `${ticker} is doing the work. Everyone else is still debating whether it matters.`;
               } else if (hasGrowth) {
-                replyText = `${ticker} attention curve is classic: early builders, then momentum awareness. Execution drives the narrative.`;
+                replyText = `${ticker} attention follows one pattern: people notice when execution happens, not promises.`;
               } else {
-                replyText = `${ticker} gaining traction because execution beats speculation. People see the signal.`;
+                replyText = `${ticker}—when execution beats narrative, the market figures it out.`;
               }
             }
           }
           
-          // If still no reply, use context-based fallback
+          // If still no reply, use context-based fallback with GROK tone
           if (!replyText || replyText.length === 0) {
             const threadSummary = contextKnowledge.conversationSummary.toLowerCase();
             const hasBots = threadSummary.includes('bot') || threadSummary.includes('agent');
             const hasBuilding = threadSummary.includes('build') || threadSummary.includes('ship');
+            const hasAI = threadSummary.includes('ai') || threadSummary.includes('intelligence');
             
-            if (hasBots) {
-              replyText = 'Autonomous systems are shipping—that\'s where the real signal lives.';
+            if (hasBots && hasAI) {
+              replyText = 'AI agents shipping—that\'s the only narrative that matters now.';
+            } else if (hasBots) {
+              replyText = 'Bots that ship beat conferences full of theorists.';
             } else if (hasBuilding) {
-              replyText = 'Execution always wins the attention battle. Builders know.';
+              replyText = 'Building wins. Always beats the alternative.';
+            } else if (hasAI) {
+              replyText = 'AI execution > AI predictions. The market knows.';
             } else {
-              replyText = 'Attention flows to execution. Always has.';
+              replyText = 'Execution always wins. Eventually.';
             }
           }
         }
