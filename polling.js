@@ -196,18 +196,25 @@ async function postReply(replyToId, text) {
   }
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   logger.info(`🚀 POLLING MENTION HANDLER`);
   logger.info(`Listening on port ${PORT}`);
   logger.info('Using Twitter v2 search/recent API');
   logger.info('Polling interval: every 30 seconds');
   logger.info('');
+  
+  try {
+    logger.info('Starting initial poll...');
+    await pollForMentions();
+    logger.success('Initial poll complete');
+    
+    logger.info('Starting polling interval (30 seconds)...');
+    setInterval(pollForMentions, 30000);
+    logger.success('Polling interval started');
+  } catch (error) {
+    logger.error('Failed to start polling', { error: error.message });
+  }
 });
-
-await pollForMentions();
-setInterval(pollForMentions, 30000);
-
-logger.success('Polling started', { interval: '30 seconds' });
 
 process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
