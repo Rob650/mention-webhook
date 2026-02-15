@@ -8,11 +8,7 @@
  * 4. Understand current context within that evolution
  */
 
-import { TwitterApi } from 'twitter-api-v2';
-
-const v2Client = new TwitterApi(process.env.TWITTER_BEARER_TOKEN).readOnlyClient;
-
-async function findThreadOrigin(conversationId) {
+async function findThreadOrigin(conversationId, v2Client) {
   try {
     // Get ALL tweets in this conversation (up to 100)
     const allTweets = await v2Client.get('tweets/search/recent', {

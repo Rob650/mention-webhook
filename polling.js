@@ -183,7 +183,7 @@ async function poll() {
             try {
               // STAGE 1: Find thread origin (understand what this thread is ABOUT)
               console.log(`[THREAD-ORIGIN] Finding root of conversation ${tweetDetail.data.conversation_id.substring(0, 8)}...`);
-              const threadData = await findThreadOrigin(tweetDetail.data.conversation_id);
+              const threadData = await findThreadOrigin(tweetDetail.data.conversation_id, v2Client);
               
               if (threadData) {
                 threadOriginContext = analyzeThreadEvolution(threadData);
