@@ -129,13 +129,22 @@ app.get('/api/replies', async (req, res) => {
  * Twitter Webhook - handles mentions
  * Triggered by Twitter when someone mentions @graisonbot
  */
+/**
+ * Webhook endpoint (GET for validation, POST for events)
+ */
+app.get('/webhooks/twitter', (req, res) => {
+  logger.info('GET /webhooks/twitter - returning 200 OK');
+  res.status(200).json({ message: 'Webhook endpoint ready' });
+});
+
 app.post('/webhooks/twitter', async (req, res) => {
   try {
     // Twitter sends confirmation challenge during setup
     if (req.body.crc_token) {
-      logger.info('Received CRC challenge');
+      logger.info('Received CRC challenge', { crc_token: req.body.crc_token });
       const responseToken = generateCRCToken(req.body.crc_token);
-      res.json({ response_token: responseToken });
+      logger.info('Responding with response_token', { response_token: responseToken });
+      res.status(200).set('Content-Type', 'application/json').json({ response_token: responseToken });
       return;
     }
 
