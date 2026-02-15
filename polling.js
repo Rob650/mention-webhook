@@ -311,7 +311,15 @@ Generate ONLY the reply text.`;
           }]
         });
         
-        let replyText = msg.content[0].text.trim();
+        let replyText = '';
+        try {
+          replyText = msg.content && msg.content[0] && msg.content[0].text 
+            ? msg.content[0].text.trim() 
+            : '';
+        } catch (e) {
+          console.log(`[REPLY-PARSE] Error extracting reply text: ${e.message}`);
+          replyText = '';
+        }
         
         // ALWAYS have a fallback - never reply with nothing
         if (!replyText || replyText.length === 0) {
