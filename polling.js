@@ -5,7 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { TwitterApi } from 'twitter-api-v2';
 import { Anthropic } from '@anthropic-ai/sdk';
-import fs from 'fs';
+import fs, { mkdirSync } from 'fs';
 
 dotenv.config();
 
@@ -30,13 +30,20 @@ let replyCount = 0;
 let lastMentionId = null; // Track the newest mention we've seen
 
 // Persistent tracking by AUTHOR_ID per CONVERSATION
-// Key format: "conversation_id:author_id" -> reply_count (max 3)
-const REPLIED_FILE = '/tmp/replied-tracking.json';
+// CRITICAL: Use workspace directory (survives restart), not /tmp
+const REPLIED_FILE = '/Users/roberttjan/.openclaw/workspace/mention-webhook/data/replied-tracking.json';
 let replyTracking = {}; // { "conv_id:author_id": 1-3 }
 
 // Also track mention IDs we've replied to (never reply to same mention twice)
-const MENTIONS_FILE = '/tmp/replied-mention-ids.json';
+const MENTIONS_FILE = '/Users/roberttjan/.openclaw/workspace/mention-webhook/data/replied-mention-ids.json';
 let repliedMentions = new Set(); // Set of mention IDs we've ever replied to
+
+// Create data directory if doesn't exist
+try {
+  mkdirSync('/Users/roberttjan/.openclaw/workspace/mention-webhook/data', { recursive: true });
+} catch (e) {
+  // Already exists
+}
 
 function loadReplyTracking() {
   try {
