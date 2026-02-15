@@ -1,1 +1,1 @@
-web: node filtered-stream-server.js
+web: node stream.js
