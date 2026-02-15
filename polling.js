@@ -245,9 +245,11 @@ async function poll() {
         }
         
         // Log thread origin context
-        if (threadOriginContext) {
+        if (threadOriginContext && threadOriginContext.originalTopic) {
           console.log(`[CONTEXT] Thread started: "${threadOriginContext.originalTopic.substring(0, 60)}..."`);
           console.log(`[CONTEXT] We're at position ${threadOriginContext.threadLength} in conversation`);
+        } else {
+          console.log(`[CONTEXT] Thread origin not determined, using conversation context`);
         }
         
         console.log(`[COMPOSE] Building reply with ${contextKnowledge.research.length} projects researched (${projectsWithData} with data)`);
