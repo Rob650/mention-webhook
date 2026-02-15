@@ -28,32 +28,33 @@ const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
 
-// Persistent tracking by CONVERSATION_ID - one conversation = max 2 replies TOTAL
-const REPLIED_FILE = '/tmp/replied-conversations.json';
-let conversationReplies = {}; // { conversation_id: reply_count }
+// Persistent tracking by AUTHOR_ID per CONVERSATION
+// Key format: "conversation_id:author_id" -> reply_count (max 3)
+const REPLIED_FILE = '/tmp/replied-tracking.json';
+let replyTracking = {}; // { "conv_id:author_id": 1-3 }
 
-function loadRepliedConversations() {
+function loadReplyTracking() {
   try {
     if (fs.existsSync(REPLIED_FILE)) {
       const data = JSON.parse(fs.readFileSync(REPLIED_FILE, 'utf8'));
-      conversationReplies = data;
-      console.log(`[INIT] Loaded conversation tracking for ${Object.keys(conversationReplies).length} conversations`);
+      replyTracking = data;
+      console.log(`[INIT] Loaded reply tracking for ${Object.keys(replyTracking).length} author-conversation pairs`);
     }
   } catch (e) {
-    console.error(`[INIT] Error loading replied conversations: ${e.message}`);
+    console.error(`[INIT] Error loading reply tracking: ${e.message}`);
   }
 }
 
-function saveRepliedConversations() {
+function saveReplyTracking() {
   try {
-    fs.writeFileSync(REPLIED_FILE, JSON.stringify(conversationReplies), 'utf8');
+    fs.writeFileSync(REPLIED_FILE, JSON.stringify(replyTracking), 'utf8');
   } catch (e) {
-    console.error(`[SAVE] Error saving replied conversations: ${e.message}`);
+    console.error(`[SAVE] Error saving reply tracking: ${e.message}`);
   }
 }
 
 // Load on startup
-loadRepliedConversations();
+loadReplyTracking();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -68,7 +69,7 @@ async function poll() {
     const me = await v2Client.me();
     const response = await v2Client.get('tweets/search/recent', {
       query: `@${me.data.username} -is:retweet`,
-      'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at,conversation_id',
+      'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at,conversation_id,author_id',
       max_results: 100
     });
     
@@ -78,21 +79,32 @@ async function poll() {
     mentionCount = mentions.length;
     console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
     
-    // Reply to first unreplied conversation (EXACTLY ONE PER CYCLE, MAX 2 PER CONVERSATION)
+    // Reply to each unique author once per cycle (ONE REPLY PER AUTHOR, MAX 3 PER AUTHOR PER CONVERSATION)
     let repliedThisCycle = 0;
+    const authorsSeen = new Set(); // Track who we've replied to THIS cycle
     
     for (const mention of mentions) {
       // HARD STOP: Only one reply per 30-second cycle
       if (repliedThisCycle > 0) break;
       
       const convId = mention.conversation_id || mention.id;
-      const convReplyCount = conversationReplies[convId] || 0;
+      const authorId = mention.author_id;
+      const trackingKey = `${convId}:${authorId}`;
       
-      // NEVER reply more than 2 times to the same conversation thread
-      if (convReplyCount >= 2) {
-        console.log(`[SKIP] Conversation ${convId.substring(0, 8)}... already has 2 replies (max reached)`);
+      // Skip if we already replied to this author in THIS cycle
+      if (authorsSeen.has(authorId)) {
+        console.log(`[SKIP] Already replied to author ${authorId.substring(0, 8)}... this cycle`);
         continue;
       }
+      
+      // Check if we've replied 3 times to this author in this conversation
+      const replyCount = replyTracking[trackingKey] || 0;
+      if (replyCount >= 3) {
+        console.log(`[SKIP] Author ${authorId.substring(0, 8)}... has 3 replies in conversation (max reached)`);
+        continue;
+      }
+      
+      authorsSeen.add(authorId);
       
       try {
         // Build context from the mention itself - make assumptions from what they said
@@ -169,11 +181,12 @@ Be GROK. Be sharp. Generate ONLY the reply text.`,
           if (posted?.data?.id) {
             replyCount++;
             repliedThisCycle++;
-            // Track this conversation - increment reply count
-            conversationReplies[convId] = (conversationReplies[convId] || 0) + 1;
-            const convReplyCount = conversationReplies[convId];
-            saveRepliedConversations(); // Persist the tracking
-            console.log(`[POSTED] ✓ Reply ${convReplyCount}/2 to conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
+            // Track this author in this conversation
+            const trackingKey = `${convId}:${authorId}`;
+            replyTracking[trackingKey] = (replyTracking[trackingKey] || 0) + 1;
+            const authorReplyCount = replyTracking[trackingKey];
+            saveReplyTracking(); // Persist the tracking
+            console.log(`[POSTED] ✓ Reply ${authorReplyCount}/3 to author ${authorId.substring(0, 8)}... in conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
