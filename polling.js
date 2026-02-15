@@ -196,8 +196,8 @@ async function poll() {
                 if (convTweets && convTweets.length > 0) {
                   console.log(`[RESEARCH] Analyzing full thread (${convTweets.length} tweets total)`);
                   
-                  // Build full context knowledge
-                  contextKnowledge = await buildContextKnowledge(convTweets);
+                  // Build full context knowledge (including research on topics)
+                  contextKnowledge = await buildContextKnowledge(convTweets, v2Client);
                   
                   console.log(`[RESEARCH] Identified ${contextKnowledge.topics.length} topics`);
                   console.log(`[RESEARCH] Researched ${contextKnowledge.research.length} topics in depth`);
@@ -237,6 +237,12 @@ async function poll() {
         
         // Log what we're about to pass to AI
         const projectsWithData = contextKnowledge.research.filter(r => r.sources > 0).length;
+        console.log(`[RESEARCH-SUMMARY] Found data on ${projectsWithData}/${contextKnowledge.research.length} topics`);
+        if (contextKnowledge.research.length > 0) {
+          contextKnowledge.research.slice(0, 3).forEach(r => {
+            console.log(`  - ${r.topic}: ${r.sources} sources, "${r.research.substring(0, 50)}..."`);
+          });
+        }
         // Check if this is a follow-up to a previous reply
         const followUpContext = isFollowUp(authorId, convId) ? getFollowUpContext(authorId, convId) : null;
         if (followUpContext) {
@@ -349,6 +355,7 @@ Generate ONLY the reply text.`;
         }
         
         console.log(`[MENTION] "${mention.text.substring(0, 50)}..."`);
+        console.log(`[PIPELINE-COMPLETE] ✓ Read thread (${contextKnowledge.threadLength} tweets) → Research (${contextKnowledge.research.length} topics) → Reply`);
         console.log(`[REPLY] "${replyText.substring(0, 70)}..."`);
         
         // Ensure no question marks remain (convert to statements)

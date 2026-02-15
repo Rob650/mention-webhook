@@ -70,50 +70,34 @@ async function identifyTopics(conversationThread) {
   return Array.from(topics.values()).slice(0, 10);
 }
 
-async function deepResearchTopic(topic) {
+async function deepResearchTopic(topic, v2Client) {
   try {
-    // For projects (@mentions), search specifically for recent updates/news
-    let query = topic.name;
-    if (topic.type === 'project') {
-      query = `${topic.name} latest updates 2025 ${topic.name} shipping ${topic.name} announcement`;
-    }
+    // Use Twitter API to search for what's being said about this topic
+    const query = `${topic.name.replace('@', '')} -is:retweet`;
     
-    const searchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5&freshness=pw`;
-    const braveKey = process.env.BRAVE_API_KEY;
+    console.log(`[TWITTER-SEARCH] Researching ${topic.name}: "${query}"`);
     
-    if (!braveKey) {
-      console.log(`[BRAVE] No API key configured`);
-      return null;
-    }
-    
-    const res = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'X-Subscription-Token': braveKey
-      }
+    const searchRes = await v2Client.get('tweets/search/recent', {
+      query: query,
+      'tweet.fields': 'public_metrics,created_at,author_id',
+      max_results: 10
     });
     
-    if (!res.ok) {
-      console.log(`[BRAVE] Search failed for ${topic.name}: HTTP ${res.status}`);
+    if (!searchRes.data || searchRes.data.length === 0) {
+      console.log(`[TWITTER-SEARCH] No tweets found for ${topic.name}`);
       return null;
     }
     
-    const data = await res.json();
-    if (!data.web || !data.web.results || data.web.results.length === 0) {
-      console.log(`[BRAVE] No results for ${topic.name}`);
-      return null;
-    }
-    
-    // Extract useful information - prioritize recent news
-    const results = data.web.results.slice(0, 5);
-    const researchItems = results.map(r => ({
-      title: r.title,
-      snippet: r.description,
-      url: r.url
+    // Extract insights from tweets about this topic
+    const tweets = searchRes.data.slice(0, 5);
+    const researchItems = tweets.map(t => ({
+      text: t.text.substring(0, 150),
+      engagement: t.public_metrics?.like_count || 0,
+      created_at: t.created_at
     }));
     
     const researchSummary = researchItems
-      .map(r => `${r.title}: ${r.snippet}`)
+      .map((r, i) => `[${i + 1}] ${r.text} (${r.engagement} likes)`)
       .join('\n\n');
     
     return {
@@ -121,15 +105,15 @@ async function deepResearchTopic(topic) {
       type: topic.type,
       research: researchSummary,
       items: researchItems,
-      sources: results.length
+      sources: researchItems.length
     };
   } catch (e) {
-    console.error(`[ERROR] Research failed for ${topic.name}: ${e.message}`);
+    console.log(`[TWITTER-SEARCH] Failed for ${topic.name}: ${e.message}`);
     return null;
   }
 }
 
-async function buildContextKnowledge(conversationThread) {
+async function buildContextKnowledge(conversationThread, v2Client) {
   console.log(`[RESEARCH] Analyzing ${conversationThread.length} tweets in thread...`);
   
   // Get topics
@@ -151,42 +135,17 @@ async function buildContextKnowledge(conversationThread) {
   const research = [];
   const projectsToResearch = projects.length > 0 ? projects : topics;
   
-  if (process.env.BRAVE_API_KEY) {
-    // If Brave API is configured, do web research
-    for (const topic of projectsToResearch.slice(0, 8)) {
-      console.log(`[RESEARCH] Researching: ${topic.name} (${topic.type})`);
-      const result = await deepResearchTopic(topic);
-      if (result) {
-        research.push(result);
-        console.log(`[RESEARCH] ✓ Got ${result.sources} sources on ${topic.name}`);
-      }
-      // Rate limit
-      await new Promise(r => setTimeout(r, 500));
+  // Use Twitter API for research (always available)
+  console.log(`[RESEARCH] Using Twitter API to research topics`);
+  for (const topic of projectsToResearch.slice(0, 8)) {
+    console.log(`[RESEARCH] Researching: ${topic.name} (${topic.type})`);
+    const result = await deepResearchTopic(topic, v2Client);
+    if (result) {
+      research.push(result);
+      console.log(`[RESEARCH] ✓ Got ${result.sources} tweets about ${topic.name}`);
     }
-  } else {
-    // Without Brave API, extract data from conversation thread about each project
-    console.log(`[RESEARCH] No Brave API key - using thread context for analysis`);
-    for (const project of projectsToResearch.slice(0, 8)) {
-      // Find what the thread says about this project
-      const projectMentions = conversationThread.filter(t => 
-        t.text.toLowerCase().includes(project.name.toLowerCase())
-      );
-      
-      if (projectMentions.length > 0) {
-        const threadData = projectMentions
-          .map(t => t.text)
-          .join('\n');
-        
-        research.push({
-          topic: project.name,
-          type: project.type,
-          research: threadData,
-          sources: projectMentions.length,
-          fromThread: true
-        });
-        console.log(`[RESEARCH] ✓ Found ${projectMentions.length} mentions of ${project.name} in thread`);
-      }
-    }
+    // Rate limit
+    await new Promise(r => setTimeout(r, 500));
   }
   
   return {
@@ -194,8 +153,7 @@ async function buildContextKnowledge(conversationThread) {
     topics,
     projects,
     research,
-    threadLength: conversationThread.length,
-    usedBraveApi: !!process.env.BRAVE_API_KEY
+    threadLength: conversationThread.length
   };
 }
 
