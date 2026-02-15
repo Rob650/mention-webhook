@@ -37,7 +37,7 @@ app.get('/', (req, res) => {
     message: 'Polling-based mention handler for @graisonbot', 
     status: 'ok',
     method: 'polling',
-    interval: '60 seconds'
+    interval: '30 seconds'
   });
 });
 
@@ -65,7 +65,7 @@ app.get('/stats', async (req, res) => {
       estimated_daily_average: `$${dailyCost.toFixed(2)}`,
       estimated_monthly: `$${(dailyCost * 30).toFixed(2)}`,
       uptime_seconds: process.uptime(),
-      polling_interval_seconds: 60,
+      polling_interval_seconds: 30,
       last_processed_tweet_id: lastProcessedTweetId,
       mentions_received: mentionCount,
       replies_sent: replyCount
@@ -77,7 +77,7 @@ app.get('/stats', async (req, res) => {
 
 async function pollForMentions() {
   try {
-    logger.info('🔍 Polling for mentions...');
+    logger.info('🔍 Polling for mentions (every 30s)...');
 
     const query = '@graisonbot -is:retweet';
     const params = {
@@ -94,7 +94,7 @@ async function pollForMentions() {
     const response = await v2Client.search(query, params);
 
     if (!response.data || response.data.length === 0) {
-      logger.info('✓ No new mentions');
+      logger.info('✓ No new mentions found');
       return;
     }
 
@@ -183,13 +183,14 @@ app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🚀 POLLING MENTION HANDLER`);
   logger.info(`Listening on port ${PORT}`);
   logger.info('Using Twitter v2 search API');
+  logger.info('Polling interval: every 30 seconds');
   logger.info('');
 });
 
 await pollForMentions();
-setInterval(pollForMentions, 60000);
+setInterval(pollForMentions, 30000);
 
-logger.success('Polling started', { interval: '60 seconds' });
+logger.success('Polling started', { interval: '30 seconds' });
 
 process.on('SIGINT', () => {
   logger.info('Shutting down gracefully...');
