@@ -31,6 +31,7 @@ const PORT = process.env.PORT || 3000;
 let lastProcessedTweetId = null;
 let mentionCount = 0;
 let replyCount = 0;
+let myUsername = null;
 
 app.get('/', (req, res) => {
   res.status(200).json({ 
@@ -75,12 +76,28 @@ app.get('/stats', async (req, res) => {
   }
 });
 
+async function getMyUsername() {
+  try {
+    const me = await v2Client.me();
+    return me.data.username;
+  } catch (error) {
+    logger.error('Failed to get username', { error: error.message });
+    return null;
+  }
+}
+
 async function pollForMentions() {
   try {
-    logger.info('🔍 Polling for mentions (every 30s)...');
+    if (!myUsername) {
+      myUsername = await getMyUsername();
+      if (!myUsername) return;
+    }
 
-    const query = '@graisonbot -is:retweet';
+    logger.info(`🔍 Polling for mentions to @${myUsername}...`);
+
+    const query = `@${myUsername} -is:retweet`;
     const params = {
+      query: query,
       'tweet.fields': 'created_at,author_id,conversation_id',
       'user.fields': 'username,name,verified',
       'expansions': 'author_id',
@@ -91,10 +108,10 @@ async function pollForMentions() {
       params.since_id = lastProcessedTweetId;
     }
 
-    const response = await v2Client.search(query, params);
+    const response = await v2Client.get('tweets/search/recent', params);
 
     if (!response.data || response.data.length === 0) {
-      logger.info('✓ No new mentions found');
+      logger.info('✓ No new mentions');
       return;
     }
 
@@ -182,7 +199,7 @@ async function postReply(replyToId, text) {
 app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🚀 POLLING MENTION HANDLER`);
   logger.info(`Listening on port ${PORT}`);
-  logger.info('Using Twitter v2 search API');
+  logger.info('Using Twitter v2 search/recent API');
   logger.info('Polling interval: every 30 seconds');
   logger.info('');
 });
