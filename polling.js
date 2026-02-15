@@ -163,6 +163,8 @@ async function poll() {
       try {
         // Fetch the thread context to get REAL facts
         let threadContext = '';
+        let researchContext = '';
+        
         try {
           const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
             'tweet.fields': 'conversation_id'
@@ -194,6 +196,31 @@ async function poll() {
         
         const mentionText = mention.text || '';
         
+        // If thread context is thin, run research on the topic
+        if (!threadContext || threadContext.length < 100) {
+          try {
+            const topicKeywords = mentionText.split(' ').slice(0, 5).join(' ');
+            
+            // Run Brave search for topic research
+            const researchUrl = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(topicKeywords)}&count=5`;
+            const braveRes = await fetch(researchUrl, {
+              headers: { 'Accept': 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY || '' }
+            });
+            
+            if (braveRes.ok) {
+              const braveData = await braveRes.json();
+              if (braveData.web && braveData.web.results) {
+                researchContext = braveData.web.results
+                  .slice(0, 3)
+                  .map(r => `${r.title}: ${r.description}`)
+                  .join('\n');
+              }
+            }
+          } catch (e) {
+            // Silent fail - proceed without research
+          }
+        }
+        
         // Generate reply in GROK's style - witty tone + actual facts
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
@@ -222,7 +249,7 @@ Example Bad: "Hit 92% uptime..." (if not in thread)
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `Thread context: "${threadContext || 'No thread context available'}"\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND a real fact (from thread only):`
+            content: `Thread context: "${threadContext || 'No direct thread context'}"\n\nResearch context (if needed): "${researchContext || 'No research needed'}"}\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND real facts (from thread or research):`
           }]
         });
         
