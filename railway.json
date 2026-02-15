@@ -4,7 +4,7 @@
     "builder": "nixpacks"
   },
   "deploy": {
-    "startCommand": "node stream.js",
+    "startCommand": "node polling.js",
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 3
   }
