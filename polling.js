@@ -33,6 +33,10 @@ let replyCount = 0;
 const REPLIED_FILE = '/tmp/replied-tracking.json';
 let replyTracking = {}; // { "conv_id:author_id": 1-3 }
 
+// Also track mention IDs we've replied to (never reply to same mention twice)
+const MENTIONS_FILE = '/tmp/replied-mention-ids.json';
+let repliedMentions = new Set(); // Set of mention IDs we've ever replied to
+
 function loadReplyTracking() {
   try {
     if (fs.existsSync(REPLIED_FILE)) {
@@ -53,8 +57,29 @@ function saveReplyTracking() {
   }
 }
 
+function loadRepliedMentions() {
+  try {
+    if (fs.existsSync(MENTIONS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(MENTIONS_FILE, 'utf8'));
+      repliedMentions = new Set(data);
+      console.log(`[INIT] Loaded ${repliedMentions.size} mention IDs we've replied to`);
+    }
+  } catch (e) {
+    console.error(`[INIT] Error loading mention IDs: ${e.message}`);
+  }
+}
+
+function saveRepliedMentions() {
+  try {
+    fs.writeFileSync(MENTIONS_FILE, JSON.stringify(Array.from(repliedMentions)), 'utf8');
+  } catch (e) {
+    console.error(`[SAVE] Error saving mention IDs: ${e.message}`);
+  }
+}
+
 // Load on startup
 loadReplyTracking();
+loadRepliedMentions();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -79,9 +104,9 @@ async function poll() {
     mentionCount = mentions.length;
     console.log(`[POLL] ${new Date().toISOString()} - Detected ${mentions.length} mentions`);
     
-    // Reply to each unique author once per cycle (ONE REPLY PER AUTHOR, MAX 3 PER AUTHOR PER CONVERSATION)
+    // Reply to each unique mention ONCE - one reply per 30-second cycle
     let repliedThisCycle = 0;
-    const authorsSeen = new Set(); // Track who we've replied to THIS cycle
+    const mentionsSeen = new Set(); // Track MENTION IDs we've replied to THIS cycle
     
     for (const mention of mentions) {
       // HARD STOP: Only one reply per 30-second cycle
@@ -89,11 +114,18 @@ async function poll() {
       
       const convId = mention.conversation_id || mention.id;
       const authorId = mention.author_id;
+      const mentionId = mention.id;
       const trackingKey = `${convId}:${authorId}`;
       
-      // Skip if we already replied to this author in THIS cycle
-      if (authorsSeen.has(authorId)) {
-        console.log(`[SKIP] Already replied to author ${authorId.substring(0, 8)}... this cycle`);
+      // NEVER reply to the same mention twice - check persistent list
+      if (repliedMentions.has(mentionId)) {
+        console.log(`[SKIP] Never replying to mention ${mentionId.substring(0, 8)}... again (already replied)`);
+        continue;
+      }
+      
+      // Skip if we already replied to THIS SPECIFIC MENTION in THIS cycle
+      if (mentionsSeen.has(mentionId)) {
+        console.log(`[SKIP] Already replied to this exact mention ${mentionId.substring(0, 8)}... this cycle`);
         continue;
       }
       
@@ -104,7 +136,7 @@ async function poll() {
         continue;
       }
       
-      authorsSeen.add(authorId);
+      mentionsSeen.add(mentionId);
       
       try {
         // Build context from the mention itself - make assumptions from what they said
@@ -184,7 +216,14 @@ Be GROK. Be sharp. Generate ONLY the reply text.`,
             // Track this author in this conversation
             replyTracking[trackingKey] = (replyTracking[trackingKey] || 0) + 1;
             const newReplyCount = replyTracking[trackingKey];
-            saveReplyTracking(); // Persist the tracking
+            
+            // ALSO track this specific mention so we never reply to it again
+            repliedMentions.add(mentionId);
+            
+            // Save both tracking systems
+            saveReplyTracking();
+            saveRepliedMentions();
+            
             console.log(`[POSTED] ✓ Reply ${newReplyCount}/3 to author ${authorId.substring(0, 8)}... in conversation ${convId.substring(0, 8)}... (${replyText.length} chars)`);
           }
         } catch (postErr) {
