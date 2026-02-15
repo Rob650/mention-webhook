@@ -57,19 +57,23 @@ let replyCount = 0;
  * Root endpoint
  */
 app.get('/', (req, res) => {
-  res.json({ message: 'Webhook server running', status: 'ok' });
+  res.status(200)
+    .set('Content-Type', 'application/json')
+    .json({ message: 'Webhook server running', status: 'ok' });
 });
 
 /**
- * Health check endpoint
+ * Health check endpoint (for Railway health checks)
  */
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    mentions_received: mentionCount,
-    replies_sent: replyCount
-  });
+  res.status(200)
+    .set('Content-Type', 'application/json')
+    .json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      mentions_received: mentionCount,
+      replies_sent: replyCount
+    });
 });
 
 /**
