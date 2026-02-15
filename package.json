@@ -3,12 +3,12 @@
   "version": "2.0.0",
   "description": "Real-time mention webhook for @graisonbot - Production ready",
   "type": "module",
-  "main": "polling-server.js",
+  "main": "filtered-stream-server.js",
   "scripts": {
-    "start": "node polling-server.js",
-    "dev": "nodemon polling-server.js",
+    "start": "node filtered-stream-server.js",
+    "dev": "nodemon filtered-stream-server.js",
+    "setup": "node setup-stream-rules.js",
     "monitor": "node monitor.js",
-    "register": "node register-webhook.js",
     "test": "node test-webhook.sh"
   },
   "keywords": [
