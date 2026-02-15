@@ -5,6 +5,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { TwitterApi } from 'twitter-api-v2';
 import { Anthropic } from '@anthropic-ai/sdk';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -26,7 +27,33 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const PORT = process.env.PORT || 3000;
 let mentionCount = 0;
 let replyCount = 0;
-const repliedTo = new Set(); // Track already-replied mentions
+
+// Persistent deduplication - load from file
+const REPLIED_FILE = '/tmp/replied-mentions.json';
+let repliedTo = new Set();
+
+function loadRepliedMentions() {
+  try {
+    if (fs.existsSync(REPLIED_FILE)) {
+      const data = JSON.parse(fs.readFileSync(REPLIED_FILE, 'utf8'));
+      repliedTo = new Set(data);
+      console.log(`[INIT] Loaded ${repliedTo.size} previously-replied mentions`);
+    }
+  } catch (e) {
+    console.error(`[INIT] Error loading replied mentions: ${e.message}`);
+  }
+}
+
+function saveRepliedMentions() {
+  try {
+    fs.writeFileSync(REPLIED_FILE, JSON.stringify(Array.from(repliedTo)), 'utf8');
+  } catch (e) {
+    console.error(`[SAVE] Error saving replied mentions: ${e.message}`);
+  }
+}
+
+// Load on startup
+loadRepliedMentions();
 
 app.get('/stats', (req, res) => {
   res.json({ 
@@ -94,7 +121,8 @@ Always acknowledge what they said first, then provide value.`,
           if (posted?.data?.id) {
             replyCount++;
             repliedTo.add(mention.id); // Mark as replied to
-            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}... (tracked)`);
+            saveRepliedMentions(); // Persist the list
+            console.log(`[REPLY] ✓ Posted to ${mention.id.substring(0, 8)}... (saved)`);
           }
         } catch (postErr) {
           console.error(`[REPLY-POST-ERROR] ${postErr.message}`);
