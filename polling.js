@@ -91,37 +91,26 @@ async function poll() {
       }
       
       try {
-        // Fetch thread context: what is this tweet replying to?
-        let threadContext = '';
-        try {
-          const tweetDetail = await v2Client.get(`tweets/${mention.id}`, {
-            'tweet.fields': 'in_reply_to_user_id,public_metrics,created_at,conversation_id'
-          });
-          
-          // If this is a reply, try to get what it's replying to
-          if (mention.in_reply_to_user_id) {
-            threadContext = `[Context: User is continuing a conversation about AI/agents/research]`;
-          }
-        } catch (contextErr) {
-          // Silently fail
-        }
+        // Build context from the mention itself - make assumptions from what they said
+        // Don't try to fetch parent tweets - just use the conversation as-is
+        const mentionText = mention.text || '';
         
-        // Generate context-aware reply with Claude
-        // Key: Don't ask clarifying questions, make informed assumptions
+        // Generate assumption-based reply with Claude
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 120,
-          system: `You're @graisonbot, expert AI research analyst. Rules:
-1. NEVER ask "what do you mean?" or "what are you referring to?"
-2. READ between the lines - the mention text IS the context
-3. Make INFORMED ASSUMPTIONS based on what they said
-4. Give a DIRECT, SPECIFIC answer (not a question)
-5. Reference their point explicitly
-6. Max 240 characters
-7. Be conversational, not robotic`,
+          system: `You're @graisonbot, an AI expert. You're in a Twitter thread.
+STRICT RULES:
+- NEVER say "I'd need more context" or "what do you mean?" - just give an answer
+- NEVER ask for clarification
+- ASSUME you understand the context
+- Reply as if you're having a normal conversation
+- If they're vague, MAKE AN ASSUMPTION and answer that
+- Be direct, conversational, specific
+- Max 240 chars`,
           messages: [{
             role: 'user',
-            content: `Mention: "${mention.text || ''}"\n\n${threadContext}\n\nReply with insight (NOT a question, make assumptions if needed):`
+            content: `They mentioned you and said: "${mentionText}"\n\nReply like a human would - just answer.`
           }]
         });
         
