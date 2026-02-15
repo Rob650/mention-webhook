@@ -221,35 +221,43 @@ async function poll() {
           }
         }
         
-        // Generate reply in GROK's style - witty tone + actual facts
+        // LOG THREAD CONTEXT FOR VERIFICATION
+        console.log(`[CONTEXT-DEBUG] Tweet: "${mentionText.substring(0, 100)}..."`);
+        console.log(`[CONTEXT-DEBUG] Thread context length: ${threadContext.length} chars`);
+        if (threadContext.length > 0) {
+          console.log(`[CONTEXT-DEBUG] Thread: ${threadContext.substring(0, 150)}...`);
+        }
+        if (researchContext.length > 0) {
+          console.log(`[CONTEXT-DEBUG] Research: ${researchContext.substring(0, 150)}...`);
+        }
+        
+        // Generate reply in GROK's style - witty tone + actual facts ONLY
         const msg = await anthropic.messages.create({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 90,
           system: `You are @graisonbot replying in a Twitter thread. Think like GROK - witty, confident, sharp.
-CRITICAL: ONLY USE REAL FACTS from the thread. NO fabrication.
+CRITICAL: ZERO fabrication. ONLY facts explicitly in the thread context.
 
-RULES (STRICT):
-1. USE ONLY facts from the thread/conversation (numbers, names, details actually mentioned)
-2. If no specific facts available, make a sharp statement based on what IS in the thread
-3. NEVER invent statistics, dates, or product claims not in the thread
-4. NO hedging language ("could", "might", "maybe")
-5. Sharp sarcasm + substance (answer the actual question)
-6. Under 240 characters
-7. Statements only - bold claims
+IRON RULES:
+1. ONLY use facts explicitly in thread context provided
+2. If claiming a company/product did something, it MUST be in the thread
+3. NO invented statistics, metrics, or product claims
+4. If thread is weak on facts, reference what IS there generically
+5. NO hedging ("could", "might", "maybe")
+6. Sharp sarcasm, confident directness
+7. Under 240 characters
 
-STYLE:
-- Lead with wit
-- Back with REAL facts from thread only
-- Confident directness
-- One insight
+VERIFICATION:
+- Can I point to where this fact appears in the thread? YES = use it
+- Is this something I'm inferring/imagining? NO = don't use it
 
-Example Good: "Q1 latency dropped 23%—everyone debating architecture." (if in thread)
-Example Bad: "Hit 92% uptime..." (if not in thread)
+Example ✅: "Thread mentions X shipped Y—that's execution vs theory talk"
+Example ❌: "X keeps shipping real markets" (unless explicitly in thread)
 
 Generate ONLY the reply text.`,
           messages: [{
             role: 'user',
-            content: `Thread context: "${threadContext || 'No direct thread context'}"\n\nResearch context (if needed): "${researchContext || 'No research needed'}"}\n\nThey asked: "${mentionText}"\n\nReply with sharp wit AND real facts (from thread or research):`
+            content: `THREAD CONTEXT:\n${threadContext || 'EMPTY'}\n\nRESEARCH:\n${researchContext || 'NONE'}\n\nMENTION:\n${mentionText}\n\nReply using ONLY facts you can point to in the context above.`
           }]
         });
         
