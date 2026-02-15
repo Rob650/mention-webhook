@@ -57,8 +57,11 @@ app.get('/stats', (req, res) => {
 
 async function pollForMentions() {
   try {
+    console.log('[POLL] Starting poll...');
     const me = await v2Client.me();
+    console.log('[POLL] Got username:', me.data.username);
     const query = `@${me.data.username} -is:retweet`;
+    console.log('[POLL] Query:', query);
 
     const response = await v2Client.get('tweets/search/recent', {
       query: query,
@@ -70,36 +73,55 @@ async function pollForMentions() {
     });
 
     const tweets = response.data || [];
+    console.log('[POLL] Found tweets:', tweets.length);
     
     if (tweets.length === 0) {
+      console.log('[POLL] No new mentions');
       return;
     }
 
     for (const tweet of tweets) {
       const author = response.includes?.users?.find(u => u.id === tweet.author_id);
-      if (!author) continue;
+      if (!author) {
+        console.log('[POLL] Could not find author for tweet:', tweet.id);
+        continue;
+      }
 
+      console.log('[POLL] Processing mention from @' + author.username);
       mentionCount++;
 
-      if (!author.verified) continue;
-      if (await hasRecentReply(tweet.author_id)) continue;
+      if (!author.verified) {
+        console.log('[POLL] Skipping unverified user');
+        continue;
+      }
+      if (await hasRecentReply(tweet.author_id)) {
+        console.log('[POLL] Already replied to this user');
+        continue;
+      }
 
       const reply = await generateReply(tweet.text);
-      if (!reply) continue;
+      if (!reply) {
+        console.log('[POLL] Failed to generate reply');
+        continue;
+      }
 
       const posted = await postReply(tweet.id, reply);
       if (posted) {
+        console.log('[POLL] Successfully posted reply:', posted);
         replyCount++;
         await addReply(tweet.author_id, tweet.id, reply);
+      } else {
+        console.log('[POLL] Failed to post reply');
       }
     }
 
     if (tweets.length > 0) {
       lastProcessedTweetId = tweets[0].id;
+      console.log('[POLL] Updated lastProcessedTweetId:', lastProcessedTweetId);
     }
 
   } catch (error) {
-    console.error('[POLL ERROR]', error.message);
+    console.error('[POLL ERROR]', error.message, error.stack);
   }
 }
 
